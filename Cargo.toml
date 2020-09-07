@@ -1,0 +1,17 @@
+[package]
+name = "chtml"
+version = "0.0.1"
+authors = ["ganmin <ganmin@360.cn>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[lib]
+name="chtml"
+path="src/lib.rs"
+
+[[bin]]
+name="chtml"
+path="src/main.rs"
