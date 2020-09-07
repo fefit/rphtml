@@ -21,6 +21,7 @@ pub enum NodeType {
   Text,         // 文本节点
   AttrKey,      // 属性名
   AttrValue,    // 属性值
+  Entity,       //实体转义字符
   AbstractRoot, // 根节点、用于文档开头等
 }
 pub enum CodeTypeIn {
@@ -36,6 +37,8 @@ pub enum CodeTypeIn {
   DoubleQuoteAttr,
   SingleQuoteAttr,
   TextNode,
+  TextEmpty,
+  TextEntity,
   EOF,
 }
 
@@ -73,7 +76,7 @@ pub struct Node {
   pub node_type: NodeType,
   pub parent: LinkedList<Node>,
   pub position: CodePosAt,
-  pub content: Option<&'static str>,
+  pub content: Vec<char>,
 }
 /**
  * Doc 文档
@@ -83,7 +86,8 @@ pub struct Doc {
   code_in: CodeTypeIn,
   position: CodePosAt,
   prev_chars: Vec<char>,
-  current_node: Node,
+  prev_char: Option<char>,
+  nodes: Vec<Node>,
 }
 impl Doc {
   // 创建实例
@@ -92,13 +96,16 @@ impl Doc {
       node_type: NodeType::AbstractRoot,
       parent: LinkedList::new(),
       position: CodePosAt::begin(),
-      content: None,
+      content: Vec::new(),
     };
+    let mut nodes = Vec::with_capacity(10);
+    nodes.push(current_node);
     Doc {
       code_in: CodeTypeIn::BOF,
       position: CodePosAt::begin(),
       prev_chars: Vec::with_capacity(30),
-      current_node,
+      nodes,
+      prev_char: None,
     }
   }
   // 读取一行
@@ -109,12 +116,11 @@ impl Doc {
       code_in,
       position,
       prev_chars,
-      current_node,
+      prev_char,
+      nodes,
     } = self;
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
-    // 前面一个字符
-    let prev_char = prev_chars.last();
     match code_in {
       BOF | TextNode => match c {
         // 匹配到标签开始标记符
