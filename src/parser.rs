@@ -24,7 +24,7 @@ pub enum NodeType {
   AbstractRoot, // 虚拟根节点，用于文档开头等
 }
 enum CodeTypeIn {
-  BOF,                             // 文本开头
+  AbstractRoot,                    // 文本开头
   Tag(TagCodeInfo),                // 标签开始
   Comment,                         // 注释
   XMLCDATA,                        // XML CDATA数据
@@ -168,7 +168,7 @@ impl<'a> Doc<'a> {
     nodes.push(node);
     chain_nodes.push(ref_node);
     Doc {
-      code_in: CodeTypeIn::BOF,
+      code_in: CodeTypeIn::AbstractRoot,
       position: CodePosAt::begin(),
       prev_char: None,
       prev_chars: Vec::with_capacity(30),
@@ -189,24 +189,27 @@ impl<'a> Doc<'a> {
       prev_char,
       nodes,
       parser_type,
+      current_node,
       ..
     } = self;
-    let isHTML = parser_type == &ParserType::HTML;
-    let isXML = !isHTML;
+    let is_html = parser_type == &ParserType::HTML;
+    let is_xml = !is_html;
+    let mut need_move_col = true;
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
     match code_in {
-      BOF | TextNode => match c {
+      AbstractRoot | TextNode => match c {
         // 匹配到标签开始标记符
         TAG_BEGIN_CHAR => {
           self.code_in = Tag(TagCodeInfo {
             is_close: false,
             is_tag: false,
-          })
+          });
         }
         // \r 在某些系统里使用\r充当换行符
         '\r' => {
           position.set_new_line();
+          need_move_col = false;
         }
         // \n 判断是否前面还有\r，有的话合并\r<windows>
         '\n' => {
@@ -215,6 +218,7 @@ impl<'a> Doc<'a> {
           } else {
             position.set_new_line();
           }
+          need_move_col = false;
         }
         // 其它情况都视作文本节点
         _ => {
@@ -229,6 +233,9 @@ impl<'a> Doc<'a> {
           space if space.is_ascii_whitespace() => {}
         }
       }
+    }
+    if (need_move_col) {
+      position.move_one();
     }
     Ok(())
   }
