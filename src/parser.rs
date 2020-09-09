@@ -13,7 +13,7 @@ pub enum ParserType {
   HTML,
   XML,
 }
-
+#[derive(PartialEq)]
 pub enum NodeType {
   Comment,      // 注释节点
   HTMLDoctype,  // HTML的Doctype声明
@@ -122,6 +122,7 @@ impl<'a> Node<'a> {
         None,                        // tag不需要内容数据
         Some(Vec::with_capacity(5)), // tag子节点
       ),
+      Text => (None, None, codeAt, Some(Vec::with_capacity(10)), None),
       _ => (
         Some(codeAt),
         Some(codeAt),
@@ -153,7 +154,7 @@ pub struct Doc<'a> {
   prev_chars: Vec<char>,
   prev_char: Option<char>,
   chain_nodes: Vec<Rc<Node<'a>>>,
-  current_node: Rc<Node<'a>>,
+  current_node: Rc<Node<'a>>, // 指向当前解析的节点
   pub parser_type: ParserType,
   pub nodes: Vec<Rc<Node<'a>>>,
 }
@@ -178,13 +179,29 @@ impl<'a> Doc<'a> {
       current_node,
     }
   }
+  // 添加节点
+  fn add_node(&mut self, node_type: NodeType) {
+    self.add_node_at(node_type, self.position);
+  }
+  fn add_node_at(&mut self, node_type: NodeType, codeAt: CodePosAt) {
+    let is_tag = node_type == NodeType::Tag;
+    let node = Rc::new(Node::new(node_type, codeAt));
+    let current_node = Rc::clone(&node);
+    if is_tag {
+      // 如果是tag的情况，需要将tag设置为
+      let ref_node = Rc::clone(&node);
+      self.chain_nodes.push(ref_node);
+    }
+    self.nodes.push(node);
+    self.current_node = current_node;
+  }
+
   // 读取一行
   pub fn read_line(&mut self, code: &str) {}
   // 读取一个字符，使用prev_chars来断定分类
   fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
     let Self {
       code_in,
-      position,
       prev_chars,
       prev_char,
       nodes,
@@ -197,6 +214,10 @@ impl<'a> Doc<'a> {
     let mut need_move_col = true;
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
+    let is_in_root = match code_in {
+      AbstractRoot => true,
+      _ => false,
+    };
     match code_in {
       AbstractRoot | TextNode => match c {
         // 匹配到标签开始标记符
@@ -206,36 +227,39 @@ impl<'a> Doc<'a> {
             is_tag: false,
           });
         }
-        // \r 在某些系统里使用\r充当换行符
-        '\r' => {
-          position.set_new_line();
-          need_move_col = false;
-        }
-        // \n 判断是否前面还有\r，有的话合并\r<windows>
-        '\n' => {
-          if let Some('\r') = prev_char {
-            // 不做处理
-          } else {
-            position.set_new_line();
-          }
-          need_move_col = false;
-        }
-        // 其它情况都视作文本节点
         _ => {
-          self.code_in = TextNode;
+          // 添加文本节点
+          if is_in_root {
+            self.add_node(NodeType::Text);
+          }
+          // \r 在某些系统里使用\r充当换行符
+          if c == '\r' {
+            self.position.set_new_line();
+            need_move_col = false;
+          } else if c == '\n' {
+            // \n 判断是否前面还有\r，有的话合并\r<windows>
+            if let Some('\r') = prev_char {
+              // 不做处理
+            } else {
+              self.position.set_new_line();
+            }
+            need_move_col = false;
+          } else {
+            self.code_in = TextNode;
+          }
           prev_chars.push(c);
         }
       },
       TagBegin => {
         // 遇到开始标签
-        match c {
+        /*match c {
           // 如果是html定义的ascii空格
           space if space.is_ascii_whitespace() => {}
-        }
+        }*/
       }
     }
     if (need_move_col) {
-      position.move_one();
+      self.position.move_one();
     }
     Ok(())
   }
