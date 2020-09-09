@@ -1,6 +1,6 @@
 use std::cell::RefCell;
-use std::collections::LinkedList;
 use std::error::Error;
+use std::rc::Rc;
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
 /**
@@ -21,22 +21,32 @@ pub enum NodeType {
   XMLCDATA,     // XMLCDATA数据
   Tag,          // Tag
   Text,         // 文本节点
-  AttrKey,      // 属性名
-  AttrValue,    // 属性值
-  Entity,       // 实体转义字符
-  AbstractRoot, // 根节点、用于文档开头等
+  AbstractRoot, // 虚拟根节点，用于文档开头等
 }
-pub enum CodeTypeIn {
-  BOF,             // 文本开头
-  TagBegin,        // 标签开始
-  Comment,         // 注释
-  CDATA,           // XML CDATA数据
-  DoubleQuoteAttr, // 双引号属性值
-  SingleQuoteAttr, // 单引号属性值
-  UnQuoteAttr,     // 无引号属性值
-  TextNode,        // 文本节点
-  EOF,
+enum CodeTypeIn {
+  BOF,                             // 文本开头
+  Tag(TagCodeInfo),                // 标签开始
+  Comment,                         // 注释
+  XMLCDATA,                        // XML CDATA数据
+  XMLDeclare,                      // xml声明
+  AttrKey,                         // 属性名
+  AttrValue,                       // 属性值
+  AttrQuotedValue(QuotedCodeInfo), // 属性值<带引号>
+  TextNode,                        // 文本节点
 }
+
+// 处理带引号数据状态
+struct QuotedCodeInfo {
+  in_translate: bool, // 是否处于反斜杠转义状态
+  is_single: bool,    // 是否单引号、否则是双引号
+}
+
+struct TagCodeInfo {
+  is_tag: bool,
+  is_close: bool,
+}
+
+// 处理tag信息
 
 /**
  * 当前解析行列位置
@@ -94,9 +104,45 @@ pub struct Node<'a> {
   pub start_end_at: Option<CodePosAt>,   // 节点开始标签结束位置
   pub close_begin_at: Option<CodePosAt>, // 节点结束标签开始位置
   pub close_end_at: CodePosAt,           // 节点结束标签结束位置
-  pub child: Vec<&'a Node<'a>>,          // 子节点、针对标签
-  pub content: Vec<char>,                // 内容部分、针对text文本节点
+  pub parent: Option<&'a Node<'a>>,      // 父节点、针对标签
+  pub content: Option<Vec<char>>,        // 内容部分、针对text文本节点
+  pub childs: Option<Vec<&'a Node<'a>>>, // 子节点
 }
+
+impl<'a> Node<'a> {
+  // 创建一个节点
+  pub fn new(node_type: NodeType, codeAt: CodePosAt) -> Self {
+    use NodeType::*;
+    let (start_end_at, close_begin_at, close_end_at, content, childs) = match node_type {
+      AbstractRoot => (None, None, codeAt, None, None),
+      Tag => (
+        Some(codeAt),
+        Some(codeAt),
+        codeAt,
+        None,                        // tag不需要内容数据
+        Some(Vec::with_capacity(5)), // tag子节点
+      ),
+      _ => (
+        Some(codeAt),
+        Some(codeAt),
+        codeAt,
+        Some(Vec::with_capacity(10)),
+        None,
+      ),
+    };
+    return Node {
+      node_type,
+      start_begin_at: codeAt,
+      start_end_at,
+      close_begin_at,
+      close_end_at,
+      parent: None,
+      content,
+      childs,
+    };
+  }
+}
+
 /**
  * Doc 文档
  * 解析
@@ -106,21 +152,21 @@ pub struct Doc<'a> {
   position: CodePosAt, // 当前解析字符位置
   prev_chars: Vec<char>,
   prev_char: Option<char>,
-  chain_nodes: Vec<RefCell<Node<'a>>>,
+  chain_nodes: Vec<Rc<Node<'a>>>,
+  current_node: Rc<Node<'a>>,
   pub parser_type: ParserType,
-  pub nodes: Vec<Node<'a>>,
+  pub nodes: Vec<Rc<Node<'a>>>,
 }
 impl<'a> Doc<'a> {
   // 创建实例
   pub fn new(parser_type: ParserType) -> Self {
-    let current_node = Node {
-      node_type: NodeType::AbstractRoot,
-      parent: LinkedList::new(),
-      position: CodePosAt::begin(),
-      content: Vec::new(),
-    };
+    let node = Rc::new(Node::new(NodeType::AbstractRoot, CodePosAt::begin()));
+    let ref_node = Rc::clone(&node);
+    let current_node = Rc::clone(&node);
     let mut nodes = Vec::with_capacity(10);
-    nodes.push(current_node);
+    let mut chain_nodes = Vec::with_capacity(10);
+    nodes.push(node);
+    chain_nodes.push(ref_node);
     Doc {
       code_in: CodeTypeIn::BOF,
       position: CodePosAt::begin(),
@@ -128,12 +174,14 @@ impl<'a> Doc<'a> {
       prev_chars: Vec::with_capacity(30),
       parser_type,
       nodes,
+      chain_nodes,
+      current_node,
     }
   }
   // 读取一行
   pub fn read_line(&mut self, code: &str) {}
   // 读取一个字符，使用prev_chars来断定分类
-  fn next(&mut self, c: char) -> Result<&mut Self, Box<dyn Error>> {
+  fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
     let Self {
       code_in,
       position,
@@ -144,12 +192,18 @@ impl<'a> Doc<'a> {
       ..
     } = self;
     let isHTML = parser_type == &ParserType::HTML;
+    let isXML = !isHTML;
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
     match code_in {
       BOF | TextNode => match c {
         // 匹配到标签开始标记符
-        TAG_BEGIN_CHAR => self.code_in = TagBegin,
+        TAG_BEGIN_CHAR => {
+          self.code_in = Tag(TagCodeInfo {
+            is_close: false,
+            is_tag: false,
+          })
+        }
         // \r 在某些系统里使用\r充当换行符
         '\r' => {
           position.set_new_line();
@@ -176,6 +230,6 @@ impl<'a> Doc<'a> {
         }
       }
     }
-    Ok(self)
+    Ok(())
   }
 }
