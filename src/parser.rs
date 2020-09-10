@@ -28,6 +28,7 @@ pub enum NodeType {
 #[derive(PartialEq)]
 enum CodeTypeIn {
   AbstractRoot,                    // 文本开头
+  Unkown,                          // 等待解析
   UnkownTag,                       // 未知标签
   Tag,                             // 标签开始
   TagEnd,                          // 标签结束
@@ -49,8 +50,9 @@ struct QuotedCodeInfo {
   is_single: bool,    // 是否单引号、否则是双引号
 }
 
-// 处理tag信息
-
+pub fn is_tag_ok(chars: &Vec<char>, parser_type: &ParserType) -> bool {
+  true
+}
 /**
  * 当前解析行列位置
 */
@@ -93,8 +95,6 @@ pub struct Attr {
 */
 pub struct TagMeta {
   pub name: String,
-  pub namespace: String,
-  pub fullname: String,
   pub attrs: Vec<Attr>,
   pub self_closed: bool,
   pub auto_fix: bool,
@@ -188,8 +188,8 @@ impl<'a> Doc<'a> {
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
     match self.code_in {
-      AbstractRoot | TextNode => {
-        let is_in_root = self.code_in == AbstractRoot;
+      TextNode | Unkown | AbstractRoot => {
+        let is_in_unknown = self.code_in == AbstractRoot || self.code_in == Unkown;
         match c {
           // 匹配到标签开始标记符
           TAG_BEGIN_CHAR => {
@@ -197,7 +197,7 @@ impl<'a> Doc<'a> {
           }
           _ => {
             // 添加文本节点
-            if is_in_root {
+            if is_in_unknown {
               let node = Rc::new(RefCell::new(Node::new(NodeType::Text, self.position)));
               let current_node = Rc::clone(&node);
               self.current_node = current_node;
@@ -226,11 +226,84 @@ impl<'a> Doc<'a> {
         }
       }
       Tag | HTMLDoctype | XMLDeclare => {
+        let is_whitespace = c.is_ascii_whitespace();
+        let is_end = if is_whitespace {
+          false
+        } else {
+          c == TAG_END_CHAR
+        };
         match &self.current_node.borrow().meta {
           Some(meta) => {
-            // meta有数据、表示解析到
+            // meta有数据、表示标签名已经解析完成
+            if is_whitespace {
+              // 忽略空格
+              self.prev_chars.push(c);
+            } else if is_end {
+            } else {
+              // 判断其它类型
+              match c {
+                '"' | '\'' => {
+                  self.code_in = AttrQuotedValue(QuotedCodeInfo {
+                    in_translate: false,
+                    is_single: c == '\'',
+                  });
+                }
+                '?' => {
+                  if self.code_in == XMLDeclare {
+                    self.prev_chars = vec![c];
+                  } else {
+                    panic!("");
+                  }
+                }
+                _ => {
+                  self.code_in = AttrKey;
+                  self.prev_chars = vec![c];
+                }
+              }
+            }
           }
-          None => {}
+          None => {
+            if is_whitespace || is_end {
+              // 遇到空格或者结束标签表示标签已经结束
+              let tag_name: String = self.prev_chars.iter().collect();
+              let mut is_meta = false;
+              if is_whitespace {
+                if self.code_in == XMLDeclare && tag_name != "xml" {
+                  panic!("错误的xml声明:{}", tag_name);
+                } else if self.code_in == HTMLDoctype && tag_name != "DOCTYPE" {
+                  panic!("错误的DOCTYPE声明:{}", tag_name);
+                } else {
+                  is_meta = true;
+                }
+              } else {
+                match self.code_in {
+                  XMLDeclare => panic!(""),
+                  HTMLDoctype => panic!(""),
+                  Tag => {
+                    is_meta = true;
+                    self.code_in = Unkown;
+                  }
+                  _ => unreachable!(),
+                }
+              }
+              if is_meta {
+                // 检查标签名是否符合规范
+                if !is_tag_ok(&self.prev_chars, &self.parser_type) {
+                  panic!("不符合规范的标签名称：{}", tag_name);
+                }
+                let meta = TagMeta {
+                  name: tag_name,
+                  attrs: Vec::new(),
+                  auto_fix: false,
+                  self_closed: false,
+                };
+                self.current_node.borrow_mut().meta = Some(meta);
+              }
+            } else {
+              // 将字符加入到prev_chars列表里
+              self.prev_chars.push(c);
+            }
+          }
         }
       }
       TagEnd => {
