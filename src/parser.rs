@@ -20,13 +20,20 @@ pub enum NodeType {
   XMLDeclare,   // XML声明头
   XMLCDATA,     // XMLCDATA数据
   Tag,          // Tag
+  TagEnd,       // Tag 结束标签
   Text,         // 文本节点
   AbstractRoot, // 虚拟根节点，用于文档开头等
 }
+
+#[derive(PartialEq)]
 enum CodeTypeIn {
   AbstractRoot,                    // 文本开头
-  Tag(TagCodeInfo),                // 标签开始
+  UnkownTag,                       // 未知标签
+  Tag,                             // 标签开始
+  TagEnd,                          // 标签结束
+  ExclamationBegin,                // 叹号开头的标签类型、包含下面的注释、HTMLDoctype声明、XMLCDATA
   Comment,                         // 注释
+  HTMLDoctype,                     // HTMLDoctype 声明内
   XMLCDATA,                        // XML CDATA数据
   XMLDeclare,                      // xml声明
   AttrKey,                         // 属性名
@@ -36,14 +43,10 @@ enum CodeTypeIn {
 }
 
 // 处理带引号数据状态
+#[derive(PartialEq)]
 struct QuotedCodeInfo {
   in_translate: bool, // 是否处于反斜杠转义状态
   is_single: bool,    // 是否单引号、否则是双引号
-}
-
-struct TagCodeInfo {
-  is_tag: bool,
-  is_close: bool,
 }
 
 // 处理tag信息
@@ -88,58 +91,50 @@ pub struct Attr {
 /**
  * Tag 标签节点信息
 */
-pub struct Tag {
+pub struct TagMeta {
   pub name: String,
   pub namespace: String,
   pub fullname: String,
   pub attrs: Vec<Attr>,
+  pub self_closed: bool,
+  pub auto_fix: bool,
 }
 
 /**
  * Node节点
  */
 pub struct Node<'a> {
-  pub node_type: NodeType,               // 节点类型
-  pub start_begin_at: CodePosAt,         // 节点开始标签开始位置
-  pub start_end_at: Option<CodePosAt>,   // 节点开始标签结束位置
-  pub close_begin_at: Option<CodePosAt>, // 节点结束标签开始位置
-  pub close_end_at: CodePosAt,           // 节点结束标签结束位置
-  pub parent: Option<&'a Node<'a>>,      // 父节点、针对标签
-  pub content: Option<Vec<char>>,        // 内容部分、针对text文本节点
-  pub childs: Option<Vec<&'a Node<'a>>>, // 子节点
+  pub node_type: NodeType,                        // 节点类型
+  pub start_at: CodePosAt,                        // 节点开始标签开始位置
+  pub end_at: CodePosAt,                          // 节点结束标签结束位置
+  pub end_tag: Option<Rc<RefCell<Node<'a>>>>,     // 结束标签的索引
+  pub parent: Option<Rc<RefCell<Node<'a>>>>,      // 父节点、针对标签
+  pub content: Option<Vec<char>>,                 // 内容部分、针对text文本节点
+  pub childs: Option<Vec<Rc<RefCell<Node<'a>>>>>, // 子节点
+  pub meta: Option<TagMeta>,
 }
 
 impl<'a> Node<'a> {
   // 创建一个节点
-  pub fn new(node_type: NodeType, codeAt: CodePosAt) -> Self {
+  pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
     use NodeType::*;
-    let (start_end_at, close_begin_at, close_end_at, content, childs) = match node_type {
-      AbstractRoot => (None, None, codeAt, None, None),
+    let (content, childs) = match node_type {
+      AbstractRoot => (None, None),
       Tag => (
-        Some(codeAt),
-        Some(codeAt),
-        codeAt,
         None,                        // tag不需要内容数据
         Some(Vec::with_capacity(5)), // tag子节点
       ),
-      Text => (None, None, codeAt, Some(Vec::with_capacity(10)), None),
-      _ => (
-        Some(codeAt),
-        Some(codeAt),
-        codeAt,
-        Some(Vec::with_capacity(10)),
-        None,
-      ),
+      _ => (Some(Vec::with_capacity(10)), None),
     };
     return Node {
       node_type,
-      start_begin_at: codeAt,
-      start_end_at,
-      close_begin_at,
-      close_end_at,
+      start_at: code_at,
+      end_at: code_at,
+      end_tag: None,
       parent: None,
       content,
       childs,
+      meta: None,
     };
   }
 }
@@ -153,15 +148,18 @@ pub struct Doc<'a> {
   position: CodePosAt, // 当前解析字符位置
   prev_chars: Vec<char>,
   prev_char: Option<char>,
-  chain_nodes: Vec<Rc<Node<'a>>>,
-  current_node: Rc<Node<'a>>, // 指向当前解析的节点
+  chain_nodes: Vec<Rc<RefCell<Node<'a>>>>,
+  current_node: Rc<RefCell<Node<'a>>>, // 指向当前解析的节点
   pub parser_type: ParserType,
-  pub nodes: Vec<Rc<Node<'a>>>,
+  pub nodes: Vec<Rc<RefCell<Node<'a>>>>,
 }
 impl<'a> Doc<'a> {
   // 创建实例
   pub fn new(parser_type: ParserType) -> Self {
-    let node = Rc::new(Node::new(NodeType::AbstractRoot, CodePosAt::begin()));
+    let node = Rc::new(RefCell::new(Node::new(
+      NodeType::AbstractRoot,
+      CodePosAt::begin(),
+    )));
     let ref_node = Rc::clone(&node);
     let current_node = Rc::clone(&node);
     let mut nodes = Vec::with_capacity(10);
@@ -179,88 +177,128 @@ impl<'a> Doc<'a> {
       current_node,
     }
   }
-  // 添加节点
-  fn add_node(&mut self, node_type: NodeType) {
-    self.add_node_at(node_type, self.position);
-  }
-  fn add_node_at(&mut self, node_type: NodeType, codeAt: CodePosAt) {
-    let is_tag = node_type == NodeType::Tag;
-    let node = Rc::new(Node::new(node_type, codeAt));
-    let current_node = Rc::clone(&node);
-    if is_tag {
-      // 如果是tag的情况，需要将tag设置为
-      let ref_node = Rc::clone(&node);
-      self.chain_nodes.push(ref_node);
-    }
-    self.nodes.push(node);
-    self.current_node = current_node;
-  }
 
   // 读取一行
   pub fn read_line(&mut self, code: &str) {}
   // 读取一个字符，使用prev_chars来断定分类
   fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
-    let Self {
-      code_in,
-      prev_chars,
-      prev_char,
-      nodes,
-      parser_type,
-      current_node,
-      ..
-    } = self;
-    let is_html = parser_type == &ParserType::HTML;
+    let is_html = self.parser_type == ParserType::HTML;
     let is_xml = !is_html;
     let mut need_move_col = true;
     // 引入CodeTypeIn里的所有枚举声明
     use CodeTypeIn::*;
-    let is_in_root = match code_in {
-      AbstractRoot => true,
-      _ => false,
-    };
-    match code_in {
-      AbstractRoot | TextNode => match c {
-        // 匹配到标签开始标记符
-        TAG_BEGIN_CHAR => {
-          self.code_in = Tag(TagCodeInfo {
-            is_close: false,
-            is_tag: false,
-          });
-        }
-        _ => {
-          // 添加文本节点
-          if is_in_root {
-            self.add_node(NodeType::Text);
+    match self.code_in {
+      AbstractRoot | TextNode => {
+        let is_in_root = self.code_in == AbstractRoot;
+        match c {
+          // 匹配到标签开始标记符
+          TAG_BEGIN_CHAR => {
+            self.code_in = UnkownTag;
           }
-          // \r 在某些系统里使用\r充当换行符
-          if c == '\r' {
-            self.position.set_new_line();
-            need_move_col = false;
-          } else if c == '\n' {
-            // \n 判断是否前面还有\r，有的话合并\r<windows>
-            if let Some('\r') = prev_char {
-              // 不做处理
-            } else {
-              self.position.set_new_line();
+          _ => {
+            // 添加文本节点
+            if is_in_root {
+              let node = Rc::new(RefCell::new(Node::new(NodeType::Text, self.position)));
+              let current_node = Rc::clone(&node);
+              self.current_node = current_node;
+              self.nodes.push(node);
             }
-            need_move_col = false;
-          } else {
-            self.code_in = TextNode;
+            // \r 在某些系统里使用\r充当换行符
+            if c == '\r' {
+              self.position.set_new_line();
+              need_move_col = false;
+            } else if c == '\n' {
+              // \n 判断是否前面还有\r，有的话合并\r<windows>
+              if let Some('\r') = self.prev_char {
+                // 不做处理
+              } else {
+                self.position.set_new_line();
+              }
+              need_move_col = false;
+            } else {
+              self.code_in = TextNode;
+            }
+            // 将内容直接加入到文本节点
+            self.current_node.borrow_mut().content.as_mut().map(|v| {
+              v.push(c);
+            });
           }
-          prev_chars.push(c);
         }
-      },
-      TagBegin => {
-        // 遇到开始标签
-        /*match c {
-          // 如果是html定义的ascii空格
-          space if space.is_ascii_whitespace() => {}
-        }*/
       }
+      Tag | HTMLDoctype | XMLDeclare => {
+        match &self.current_node.borrow().meta {
+          Some(meta) => {
+            // meta有数据、表示解析到
+          }
+          None => {}
+        }
+      }
+      TagEnd => {
+        // 结束标签处理逻辑
+      }
+      Comment | XMLCDATA => {}
+      UnkownTag => {
+        // 标签还没有被确定类型
+        let begin_at = CodePosAt {
+          line_no: self.position.line_no,
+          col_no: self.position.col_no - 1,
+        };
+        let mut new_node: Option<Rc<RefCell<Node<'a>>>> = None;
+        match c {
+          'a'..='z' | 'A'..='Z' => {
+            // 标签开头、将标签直接加入
+            let mut orig_node = Node::new(NodeType::Tag, begin_at);
+            // 设置父级为当前chain_nodes的最后一个节点
+            orig_node.parent = Some(Rc::clone(self.chain_nodes.last().unwrap()));
+            let node = Rc::new(RefCell::new(orig_node));
+            // 设置
+            let ref_node = Rc::clone(&node);
+            self.chain_nodes.push(ref_node);
+            new_node = Some(node);
+            self.code_in = Tag;
+            self.prev_chars.push(c);
+          }
+          '/' => {
+            // 结束标签
+            let node = Rc::new(RefCell::new(Node::new(NodeType::XMLDeclare, begin_at)));
+            new_node = Some(node);
+            self.code_in = TagEnd;
+          }
+          '?' => {
+            if is_xml {
+              // 视作xml声明标签
+              let node = Rc::new(RefCell::new(Node::new(NodeType::XMLDeclare, begin_at)));
+              new_node = Some(node);
+              self.code_in = XMLDeclare;
+            } else {
+              panic!("无法识别的html标签")
+            }
+          }
+          '!' => {
+            // Comment|DOCTYPE|XMLCDATA
+            self.code_in = ExclamationBegin;
+          }
+          _ => {
+            panic!("错误的标签标记");
+          }
+        };
+        // 1、将current_node指向当前节点
+        // 2、将节点加入nodes
+        if let Some(node) = new_node {
+          let current_node = Rc::clone(&node);
+          self.current_node = current_node;
+          self.nodes.push(node);
+        }
+      }
+      ExclamationBegin => {}
+      _ => {}
     }
-    if (need_move_col) {
+    // 移动region文档位置
+    if need_move_col {
       self.position.move_one();
     }
+    // 设置前一个字符串
+    self.prev_char = Some(c);
     Ok(())
   }
 }
