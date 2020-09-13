@@ -27,17 +27,17 @@ pub enum NodeType {
 
 #[derive(PartialEq)]
 enum CodeTypeIn {
-  AbstractRoot,     // 文本开头
-  Unkown,           // 等待解析
-  UnkownTag,        // 未知标签
-  Tag,              // 标签开始
-  TagEnd,           // 标签结束
-  ExclamationBegin, // 叹号开头的标签类型、包含下面的注释、HTMLDoctype声明、XMLCDATA
-  Comment,          // 注释
-  HTMLDoctype,      // HTMLDoctype 声明内
-  XMLCDATA,         // XML CDATA数据
-  XMLDeclare,       // xml声明
-  TextNode,         // 文本节点
+  AbstractRoot,                        // 文本开头
+  Unkown,                              // 等待解析
+  UnkownTag,                           // 未知标签
+  Tag,                                 // 标签开始
+  TagEnd,                              // 标签结束
+  ExclamationBegin(Option<Vec<char>>), // 叹号开头的标签类型、包含下面的注释、HTMLDoctype声明、XMLCDATA
+  Comment,                             // 注释
+  HTMLDoctype,                         // HTMLDoctype 声明内
+  XMLCDATA,                            // XML CDATA数据
+  XMLDeclare,                          // xml声明
+  TextNode,                            // 文本节点
 }
 
 // 处理带引号数据状态
@@ -232,32 +232,40 @@ impl<'a> Doc<'a> {
         };
         match &self.current_node.borrow_mut().meta {
           Some(meta) => {
-            // meta有数据、表示标签名已经解析完成
             let mut meta = meta.borrow_mut();
+            // meta有数据、表示标签名已经解析完成
             use TagCodeIn::*;
-            match &meta.tag_in {
-              Wait => {
+            match meta.tag_in {
+              Wait | Key | Value => {
+                let tag_in_wait = meta.tag_in == Wait;
+                let mut is_end_key_or_value = false;
                 // 等待状态
-                let is_self_close = self.prev_char == '/';
-                if (self.prev_char == '?' || is_self_close) && !is_end {
+                if tag_in_wait && (self.prev_char == '?' || self.prev_char == '/') && !is_end {
                   panic!("错误的标签{}", self.prev_char);
                 }
                 if is_whitespace {
-                  // 忽略空格
+                  // wait状态下忽略空格
+                  if !tag_in_wait {
+                    is_end_key_or_value = true;
+                  }
                 } else if is_end {
                   meta.is_end = true;
                   // 自闭合标签
-                  if is_self_close {
-                    meta.is_closed = true;
-                    meta.self_closed = true;
-                    // 将标签从chain列表里移除
-                    self.chain_nodes.pop();
+                  if tag_in_wait {
+                    if self.prev_char == '/' {
+                      meta.is_closed = true;
+                      meta.self_closed = true;
+                      // 将标签从chain列表里移除
+                      self.chain_nodes.pop();
+                    }
+                  } else {
+                    is_end_key_or_value = true;
                   }
                   self.code_in = Unkown;
                 } else {
                   // 判断其它类型
                   match c {
-                    '"' | '\'' => {
+                    '"' | '\'' if tag_in_wait => {
                       // 如果不是处在key-value位置
                       if !meta.is_in_kv {
                         if !self.prev_char.is_ascii_whitespace() {
@@ -277,37 +285,79 @@ impl<'a> Doc<'a> {
                         SingleQuotedValue
                       };
                     }
-                    '?' => {
-                      if self.code_in != XMLDeclare {
+                    '?' | '/' | '=' => {
+                      if c == '?' && self.code_in != XMLDeclare {
                         panic!("错误的标签?");
-                      }
-                    }
-                    '/' => {
-                      if self.code_in != Tag {
+                      } else if c == '/' && self.code_in != Tag {
                         panic!("错误的结束标签/");
+                      } else if c == '=' {
+                        if meta.prev_is_key {
+                          meta.is_in_kv = true;
+                        } else {
+                          panic!("错误的=");
+                        }
                       }
-                    }
-                    '=' => {
-                      if meta.prev_is_key {
-                        meta.is_in_kv = true;
-                      } else {
-                        panic!("错误的=");
+                      if !tag_in_wait {
+                        // 结束key和value
+                        meta.tag_in = Wait;
+                        is_end_key_or_value = true;
                       }
                     }
                     _ => {
-                      // 判断是否正确的属性名
-                      self.prev_chars = vec![c];
-                      meta.tag_in = Key;
-                      meta.attr_index += 1;
+                      // 判断是否正确的属性名或者value值
+                      if tag_in_wait {
+                        self.prev_chars = vec![c];
+                        if meta.is_in_kv {
+                          meta.tag_in = Value;
+                        } else {
+                          meta.tag_in = Key;
+                          // 属性值往前移动一位
+                          meta.attr_index += 1;
+                          meta.prev_is_key = true;
+                        }
+                      } else {
+                        // key或者value的情况下直接加入到prev_chars列表里
+                        self.prev_chars.push(c);
+                      }
                     }
                   }
                 }
+                if is_end_key_or_value {
+                  // key或者value状态
+                  let attr_index = meta.attr_index as usize;
+                  let is_key = meta.tag_in == Key;
+                  let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                  let target = if is_key {
+                    cur_attr.value.as_mut()
+                  } else {
+                    cur_attr.key.as_mut()
+                  };
+                  if let Some(v) = target {
+                    *v = self.prev_chars.iter().collect::<String>();
+                    self.prev_chars.clear();
+                  }
+                }
               }
-              Key | Value => {}
               DoubleQuotedValue | SingleQuotedValue => {
+                let is_in_translate = meta.is_in_translate;
                 let attr_index = meta.attr_index as usize;
-                let mut cur_attr = meta.attrs.get_mut(attr_index).unwrap();
-                cur_attr.value.unwrap().push_str(c.to_string());
+                if !is_in_translate {
+                  meta.is_in_translate = true;
+                  self.prev_chars.push(c);
+                } else {
+                  if (meta.tag_in == DoubleQuotedValue && c == '"')
+                    || (meta.tag_in == SingleQuotedValue && c == '\'')
+                  {
+                    meta.tag_in = Wait;
+                    let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                    if let Some(v) = cur_attr.value.as_mut() {
+                      *v = self.prev_chars.iter().collect::<String>();
+                      self.prev_chars.clear();
+                    }
+                  } else {
+                    self.prev_chars.push(c);
+                  }
+                }
               }
             }
           }
@@ -359,7 +409,12 @@ impl<'a> Doc<'a> {
       TagEnd => {
         // 结束标签处理逻辑
       }
-      Comment | XMLCDATA => {}
+      Comment | XMLCDATA => {
+        if c == '>' && self.prev_chars.len() >= 2 {
+        } else {
+          self.prev_chars.push(c);
+        }
+      }
       UnkownTag => {
         // 标签还没有被确定类型
         let begin_at = CodePosAt {
@@ -399,7 +454,7 @@ impl<'a> Doc<'a> {
           }
           '!' => {
             // Comment|DOCTYPE|XMLCDATA
-            self.code_in = ExclamationBegin;
+            self.code_in = ExclamationBegin(None);
           }
           _ => {
             panic!("错误的标签标记");
@@ -413,7 +468,46 @@ impl<'a> Doc<'a> {
           self.nodes.push(node);
         }
       }
-      ExclamationBegin => {}
+      ExclamationBegin(ref char_queue) => {
+        // 解析Comment/CDATA/DOCTYPE
+        if let Some(next_chars) = char_queue {
+          let total_len = self.prev_chars.len();
+          let actual_len = next_chars.len();
+          if total_len < actual_len {
+            let cur_should_be = next_chars.get(total_len).unwrap();
+            if *cur_should_be == c {
+              if total_len == actual_len - 1 {
+                self.code_in = match c {
+                  '-' => Comment,
+                  'E' => HTMLDoctype,
+                  'A' => XMLCDATA,
+                  _ => unreachable!(),
+                };
+              }
+            } else {
+              panic!(
+                "错误的标签，是否意思<!{}",
+                next_chars.iter().collect::<String>()
+              );
+            }
+          }
+        } else {
+          match c {
+            '-' => {
+              self.code_in = ExclamationBegin(Some(vec!['-', '-']));
+            }
+            'D' => {
+              self.code_in = ExclamationBegin(Some(vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']));
+            }
+            '[' => {
+              self.code_in = ExclamationBegin(Some(vec!['[', '[', 'C', 'D', 'A', 'T', 'A']));
+            }
+            _ => {
+              panic!("无法识别的标签{}", c);
+            }
+          };
+        }
+      }
     }
     // 判断是否需要换行等
     let mut need_move_col = true;
