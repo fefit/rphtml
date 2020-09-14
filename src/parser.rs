@@ -66,7 +66,7 @@ impl CodePosAt {
   }
   // 创建一个开始位置
   pub fn begin() -> Self {
-    CodePosAt::new(0, 0)
+    CodePosAt::new(1, 0)
   }
   // 跳转新行
   pub fn set_new_line(&mut self) {
@@ -204,6 +204,9 @@ impl<'a> Doc<'a> {
     for c in content.chars() {
       self.next(c)?;
     }
+    for (index, node) in self.nodes.iter().enumerate() {
+      println!("index:{}, node: {:?}", index, node);
+    }
     Ok(())
   }
   // 读取一个字符，使用prev_chars来断定分类
@@ -259,6 +262,7 @@ impl<'a> Doc<'a> {
               Wait | Key | Value => {
                 println!("tag状态{:?}", meta.tag_in);
                 let tag_in_wait = meta.tag_in == Wait;
+                let is_key = meta.tag_in == Key;
                 let mut is_end_key_or_value = false;
                 // 等待状态
                 if tag_in_wait && (self.prev_char == '?' || self.prev_char == '/') && !is_end {
@@ -313,6 +317,7 @@ impl<'a> Doc<'a> {
                         panic!("错误的结束标签/");
                       } else if c == '=' {
                         if meta.prev_is_key {
+                          println!("<<<<<<<<{}", meta.attr_index);
                           meta.is_in_kv = true;
                         } else {
                           panic!("错误的=");
@@ -346,7 +351,6 @@ impl<'a> Doc<'a> {
                 if is_end_key_or_value {
                   // key或者value状态
                   let attr_index = meta.attr_index as usize;
-                  let is_key = meta.tag_in == Key;
                   if meta.attrs.len() <= attr_index {
                     let mut attr = Attr {
                       key: None,
@@ -359,15 +363,14 @@ impl<'a> Doc<'a> {
                     } else {
                       attr.value = Some(empty_string);
                     }
-                    println!("增加vec属性");
                     meta.attrs.push(attr);
                   };
-                  println!("attr_index:{}", attr_index);
+                  println!("attr_index:{} ===》 {:?}", attr_index, meta.attrs);
                   let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
                   let target = if is_key {
-                    cur_attr.value.as_mut()
-                  } else {
                     cur_attr.key.as_mut()
+                  } else {
+                    cur_attr.value.as_mut()
                   };
                   if let Some(v) = target {
                     *v = self.prev_chars.iter().collect::<String>();
@@ -378,20 +381,35 @@ impl<'a> Doc<'a> {
               DoubleQuotedValue | SingleQuotedValue => {
                 let is_in_translate = meta.is_in_translate;
                 let attr_index = meta.attr_index as usize;
-                if !is_in_translate {
-                  meta.is_in_translate = true;
+                if is_in_translate {
+                  meta.is_in_translate = false;
                   self.prev_chars.push(c);
                 } else {
                   if (meta.tag_in == DoubleQuotedValue && c == '"')
                     || (meta.tag_in == SingleQuotedValue && c == '\'')
                   {
                     meta.tag_in = Wait;
+                    println!(
+                      "==========>attr_index:{}, meta.attrs===>{:?}",
+                      attr_index, meta.attrs
+                    );
+                    if meta.attrs.len() <= attr_index {
+                      meta.attrs.push(Attr {
+                        key: None,
+                        value: Some("".to_string()),
+                        quote: None,
+                      });
+                    }
                     let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                    cur_attr.quote = Some(c.to_string());
                     if let Some(v) = cur_attr.value.as_mut() {
                       *v = self.prev_chars.iter().collect::<String>();
                       self.prev_chars.clear();
                     }
                   } else {
+                    if c == '\\' {
+                      meta.is_in_translate = true;
+                    }
                     self.prev_chars.push(c);
                   }
                 }
@@ -675,20 +693,20 @@ mod test {
   fn test_doc() {
     let mut doc = Doc::new(ParserType::HTML);
     let html = r#"
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <meta name="keywords" />
-      </head>
-      <body>
-        <!---this is a comment--->
-        <div class="hello">
-          world!
-        </div>
-      </body>
-    </html>
-    "#;
+		<!DOCTYPE html>
+		<html>
+			<head>
+				<meta charset="utf-8" />
+				<meta name="keywords" />
+			</head>
+			<body>
+				<!---this is a comment--->
+				<div class="hello">
+					world!
+				</div>
+			</body>
+		</html>
+		"#;
     doc.parse(html);
   }
 }
