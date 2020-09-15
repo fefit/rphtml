@@ -1,7 +1,7 @@
 use chtml::parser::*;
 fn main() {
 	let mut doc = Doc::new(ParserType::HTML);
-	/*let html = r#"
+	let html = r#"
 	<!DOCTYPE html>
 	<html>
 		<head>
@@ -16,9 +16,9 @@ fn main() {
 		</body>
 	</html>
 	"#;
-	doc.parse(html);*/
-	let tag = r#"
+	doc.parse(html);
+	/*let tag = r#"
 			<div class="hello good" readonly></div>
 		"#;
-	doc.parse(tag);
+	doc.parse(tag);*/
 }
