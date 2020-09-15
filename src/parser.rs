@@ -337,7 +337,10 @@ impl<'a> Doc<'a> {
                       // if not in kv
                       if !meta.is_in_kv {
                         if !self.prev_char.is_ascii_whitespace() {
-                          panic!("属性值之间缺少空格");
+                          panic!(
+                            "no whitespace in tag '<{}' between attributes at {:?}",
+                            meta.name, self.position
+                          );
                         }
                         meta.attr_index += 1;
                       } else {
@@ -662,7 +665,6 @@ impl<'a> Doc<'a> {
           match c {
             '-' => {
               self.code_in = ExclamationBegin(begin_at, Some(vec!['-', '-']));
-              println!("发现注释标签");
             }
             'D' if self.parser_type == ParserType::HTML => {
               self.code_in =
