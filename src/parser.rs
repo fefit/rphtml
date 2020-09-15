@@ -29,7 +29,7 @@ pub enum NodeType {
 #[derive(PartialEq)]
 enum CodeTypeIn {
   AbstractRoot,         // abstract root node,the begin node of document
-  Unkown,               // same as abstract root,not in any other node
+  Unkown,               // wait for detect node
   UnkownTag(CodePosAt), // is a tag begin with '<', but need more diagnosis
   Tag,                  // the start tag\self-closing tag\autofix empty tag
   TagEnd,               // the end tag
@@ -236,7 +236,11 @@ impl<'a> Doc<'a> {
       self.next(c)?;
     }
     for (index, node) in self.nodes.iter().enumerate() {
-      println!("index:{}, node: {:?}", index, node);
+      let node = node.borrow();
+      println!(
+        "index:{}, node: {:?}, begin_at: {:?}, end_at:{:?}",
+        index, node.node_type, node.start_at, node.end_at
+      );
     }
     Ok(())
   }
@@ -253,15 +257,20 @@ impl<'a> Doc<'a> {
     let mut new_node: Option<RefNode<'a>> = None;
     // if new node, check if tag node
     let mut is_new_tag = false;
+    // check if the node end
+    let mut is_node_end = false;
+    // check if text node end
+    let mut is_text_node_end = false;
+    // match all posible nodes
     match self.code_in {
       TextNode | Unkown | AbstractRoot => {
         match c {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
             if self.code_in == TextNode {
-              let mut current_node = self.current_node.borrow_mut();
-              current_node.content = Some(self.prev_chars.clone());
-              current_node.end_at = self.position;
+              self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+              is_node_end = true;
+              is_text_node_end = true;
             }
             self.code_in = UnkownTag(self.position);
             self.prev_chars.clear();
@@ -320,6 +329,7 @@ impl<'a> Doc<'a> {
                   } else {
                     is_end_key_or_value = true;
                   }
+                  is_node_end = true;
                   self.code_in = Unkown;
                 } else {
                   match c {
@@ -438,6 +448,7 @@ impl<'a> Doc<'a> {
                   XMLDeclare => panic!("wrong xml declare"),
                   HTMLDoctype => panic!("wrong html doctype"),
                   Tag => {
+                    is_node_end = true;
                     self.code_in = Unkown;
                   }
                   _ => unreachable!("enum all"),
@@ -472,41 +483,53 @@ impl<'a> Doc<'a> {
           let end_tag_name = self.chars_to_string();
           let mut is_tag_ended = false;
           let mut iter = self.chain_nodes.iter().rev();
-          let mut back_num: u32 = 0;
-          let max_back_num = 1;
-          let is_allow_fix = max_back_num == 1;
+          let mut back_num: usize = 0;
+          let max_back_num: usize = match self.parser_type {
+            ParserType::HTML => self.chain_nodes.len(),
+            ParserType::XML => 0,
+          };
+          let is_allow_fix = max_back_num > 0;
           let mut empty_closed_tags: Vec<RefNode<'a>> = vec![];
-          let mut real_parent_node: Option<RefNode<'a>> = None;
-          while let Some(current_node) = iter.next() {
-            if let Some(meta) = &current_node.borrow().meta {
+          let mut real_tag_node: Option<RefNode<'a>> = None;
+          while let Some(node) = iter.next() {
+            if let Some(meta) = &node.borrow().meta {
               let tag_name = &meta.borrow().name;
-              if tag_name == &end_tag_name {
+              if tag_name == &end_tag_name
+                || (self.parser_type == ParserType::HTML
+                  && tag_name.to_lowercase() == end_tag_name.to_lowercase())
+              {
                 is_tag_ended = true;
-                real_parent_node = Some(Rc::clone(current_node));
+                real_tag_node = Some(Rc::clone(node));
                 // todo: set the end tag
                 break;
               } else if is_allow_fix {
-                empty_closed_tags.push(Rc::clone(current_node));
+                // html void element: https://www.w3.org/TR/2011/WD-html-markup-20110113/syntax.html
+                empty_closed_tags.push(Rc::clone(node));
               }
             }
             back_num += 1;
-            if back_num >= max_back_num {
+            // in xml, not allowed a void element tag nor self-closing nor end tag
+            if back_num > max_back_num {
               break;
             }
           }
           if is_tag_ended {
+            is_node_end = true;
             self.code_in = Unkown;
             // find the nearest tag,
-            if empty_closed_tags.len() > 0 {
-              if let Some(parent_node) = &real_parent_node {
+            if let Some(tag) = &real_tag_node {
+              // set end tag for the tag node
+              tag.borrow_mut().end_tag = Some(Rc::clone(&self.current_node));
+              // change the empty tags
+              if empty_closed_tags.len() > 0 {
                 for tag_node in empty_closed_tags.iter_mut() {
                   // change the parent node
-                  tag_node.borrow_mut().parent = Some(Rc::downgrade(parent_node));
+                  tag_node.borrow_mut().parent = Some(Rc::downgrade(tag));
                   // change all childs's parent and clear
                   if let Some(childs) = &tag_node.borrow_mut().childs {
                     if childs.len() > 0 {
                       for child_node in childs.iter() {
-                        child_node.borrow_mut().parent = Some(Rc::downgrade(parent_node));
+                        child_node.borrow_mut().parent = Some(Rc::downgrade(tag));
                       }
                     }
                   }
@@ -514,8 +537,16 @@ impl<'a> Doc<'a> {
                 }
               }
             }
+            // remove the matched tag from the chain nodes
+            self
+              .chain_nodes
+              .truncate(self.chain_nodes.len() - back_num - 1);
           } else {
-            panic!("错误的结束标签{}", end_tag_name);
+            panic!(
+              "wrong end tag '</{}>' at {:?}",
+              end_tag_name,
+              self.current_node.borrow().start_at
+            );
           }
         } else {
           self.prev_chars.push(c);
@@ -524,14 +555,14 @@ impl<'a> Doc<'a> {
       Comment | XMLCDATA => {
         // comment node or xml cdata node
         let mut is_end = false;
-        let end_symbol = if self.code_in == Comment { ']' } else { '-' };
+        let end_symbol = if self.code_in == Comment { '-' } else { ']' };
         if c == '>' && self.prev_char == end_symbol && self.prev_chars.len() >= 2 {
           let total_len = self.prev_chars.len();
           let prev_last_char = self.prev_chars[total_len - 2];
           if prev_last_char == end_symbol {
             is_end = true;
-            let mut current_node = self.current_node.borrow_mut();
-            current_node.end_at = self.position;
+            self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+            is_node_end = true;
             self.code_in = Unkown;
           }
         }
@@ -570,7 +601,7 @@ impl<'a> Doc<'a> {
               ))));
               self.code_in = XMLDeclare;
             } else {
-              panic!("无法识别的html标签")
+              panic!("unrecognized tag <? at {:?}", begin_at);
             }
           }
           '!' => {
@@ -589,7 +620,7 @@ impl<'a> Doc<'a> {
           let actual_len = next_chars.len();
           if total_len < actual_len {
             let cur_should_be = next_chars.get(total_len).unwrap();
-            if *cur_should_be == c {
+            if cur_should_be == &c {
               if total_len == actual_len - 1 {
                 match c {
                   '-' => {
@@ -631,6 +662,7 @@ impl<'a> Doc<'a> {
           match c {
             '-' => {
               self.code_in = ExclamationBegin(begin_at, Some(vec!['-', '-']));
+              println!("发现注释标签");
             }
             'D' if self.parser_type == ParserType::HTML => {
               self.code_in =
@@ -641,12 +673,20 @@ impl<'a> Doc<'a> {
                 ExclamationBegin(begin_at, Some(vec!['[', 'C', 'D', 'A', 'T', 'A', '[']));
             }
             _ => {
-              panic!("unrecognized tat <!{}", c);
+              panic!("unrecognized tag '<!{}' at {:?}", c, begin_at);
             }
           };
         }
         self.prev_chars.push(c);
       }
+    }
+    // set the end tag position
+    if is_node_end {
+      self.current_node.borrow_mut().end_at = if is_text_node_end {
+        self.position
+      } else {
+        self.position.next_col()
+      };
     }
     // do with the position
     {
@@ -686,8 +726,7 @@ impl<'a> Doc<'a> {
         }
       }
       // set current node to be new node
-      let current_node = Rc::clone(&node);
-      self.current_node = current_node;
+      self.current_node = Rc::clone(&node);
       // if is a tag node, add the tag node to chain nodes
       if is_new_tag {
         self.chain_nodes.push(Rc::clone(&node));
