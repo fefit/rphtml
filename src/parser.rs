@@ -29,14 +29,16 @@ pub enum NodeType {
 
 #[derive(PartialEq)]
 enum CodeTypeIn {
-  AbstractRoot,         // abstract root node,the begin node of document
-  Unkown,               // wait for detect node
-  UnkownTag(CodePosAt), // is a tag begin with '<', but need more diagnosis
-  Tag,                  // the start tag\self-closing tag\autofix empty tag
-  TagEnd,               // the end tag
+  AbstractRoot,               // abstract root node,the begin node of document
+  Unkown,                     // wait for detect node
+  UnkownTag(CodePosAt, bool), // is a tag begin with '<', but need more diagnosis
+  Tag,                        // the start tag\self-closing tag\autofix empty tag
+  TagEnd,                     // the end tag
   ExclamationBegin(CodePosAt, Option<Vec<char>>), // tag begin with '!' maybe Comment|XMLCDATA|HTMLDoctype
   Comment,                                        // comment tag
   HTMLDoctype,                                    // html doctype
+  HTMLScript(CodePosAt, bool),                    // html script
+  HTMLStyle(CodePosAt, bool),                     // html css style
   XMLCDATA,                                       // xml cdata data
   XMLDeclare,                                     // xml declare
   TextNode,                                       // text node
@@ -244,17 +246,6 @@ impl<'a> Doc<'a> {
       self.next(c)?;
     }
     self.eof();
-    for (index, node) in self.nodes.iter().enumerate() {
-      let node = node.borrow();
-      println!(
-        "index:{}, node: {:?}, depth:{}, begin:{:?}",
-        index, node.node_type, node.depth, node.begin_at
-      );
-    }
-    for node in &self.chain_nodes {
-      let node = node.borrow();
-      println!("nodetype:{:?}", node.node_type);
-    }
     Ok(())
   }
   fn chars_to_string(&self) -> String {
@@ -283,16 +274,14 @@ impl<'a> Doc<'a> {
         match c {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
+            let mut prev_is_textnode = false;
             if self.code_in == TextNode {
-              if is_xml {
-                // can't contains tag in a xml text node
-                panic!("wrong tag node in a text node at {:?}", self.position);
-              }
+              prev_is_textnode = true;
               self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
               is_node_end = true;
               is_text_node_end = true;
             }
-            self.code_in = UnkownTag(self.position);
+            self.code_in = UnkownTag(self.position, prev_is_textnode);
             self.prev_chars.clear();
           }
           _ => {
@@ -323,7 +312,9 @@ impl<'a> Doc<'a> {
         } else {
           c == TAG_END_CHAR
         };
+        let is_in_tag = self.code_in == Tag;
         let mut current_node = self.current_node.borrow_mut();
+        let mut tag_name: String = String::from("");
         match current_node.meta.as_mut() {
           Some(meta) => {
             let mut meta = meta.borrow_mut();
@@ -355,8 +346,12 @@ impl<'a> Doc<'a> {
                   } else {
                     is_end_key_or_value = true;
                   }
+                  // tag end
                   is_node_end = true;
-                  self.code_in = Unkown;
+                  // save tag name
+                  if is_in_tag {
+                    tag_name = meta.name.clone();
+                  }
                 } else {
                   match c {
                     '"' | '\'' if tag_in_wait => {
@@ -436,7 +431,6 @@ impl<'a> Doc<'a> {
               DoubleQuotedValue | SingleQuotedValue => {
                 let is_in_translate = meta.is_in_translate;
                 let attr_index = meta.attr_index as usize;
-                let is_in_kv = meta.is_in_kv;
                 if is_in_translate {
                   meta.is_in_translate = false;
                   self.prev_chars.push(c);
@@ -451,7 +445,6 @@ impl<'a> Doc<'a> {
                     let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
                     cur_attr.quote = Some(c.to_string());
                     cur_attr.value = Some(self.chars_to_string());
-                    println!("cur_attr,{:?},is_in_kv:{}", cur_attr, is_in_kv);
                     self.prev_chars.clear();
                   } else {
                     if c == '\\' {
@@ -465,29 +458,32 @@ impl<'a> Doc<'a> {
           }
           None => {
             if is_whitespace || is_end {
-              let tag_name: String = self.prev_chars.iter().collect();
+              let cur_tag_name: String = self.prev_chars.iter().collect();
               if is_whitespace {
-                if self.code_in == XMLDeclare && tag_name != "xml" {
-                  panic!("wrong xml declare:{}", tag_name);
-                } else if self.code_in == HTMLDoctype && tag_name != "DOCTYPE" {
-                  panic!("wrong html doctype:{}", tag_name);
+                if self.code_in == XMLDeclare && cur_tag_name != "xml" {
+                  panic!("wrong xml declare:{}", cur_tag_name);
+                } else if self.code_in == HTMLDoctype && cur_tag_name != "DOCTYPE" {
+                  panic!("wrong html doctype:{}", cur_tag_name);
                 }
               } else {
+                if is_in_tag {
+                  tag_name = cur_tag_name.clone();
+                }
                 match self.code_in {
                   XMLDeclare => panic!("wrong xml declare"),
                   HTMLDoctype => panic!("wrong html doctype"),
                   Tag => {
+                    // tag end
                     is_node_end = true;
-                    self.code_in = Unkown;
                   }
                   _ => unreachable!("enum all"),
                 }
               }
               if !is_identity(&self.prev_chars, &self.parser_type) {
-                panic!("incorrect identity：{}", tag_name);
+                panic!("incorrect identity：{}", cur_tag_name);
               }
               let meta = TagMeta {
-                name: tag_name,
+                name: cur_tag_name,
                 attrs: Vec::new(),
                 attr_index: -1,
                 auto_fix: false,
@@ -502,6 +498,18 @@ impl<'a> Doc<'a> {
             } else {
               self.prev_chars.push(c);
             }
+          }
+        }
+        if is_node_end {
+          if is_in_tag && is_html {
+            match tag_name.to_lowercase().as_str() {
+              "script" => self.code_in = HTMLScript(self.position, true),
+              "style" => self.code_in = HTMLStyle(self.position, false),
+              _ => self.code_in = Unkown,
+            }
+            self.prev_chars.clear();
+          } else {
+            self.code_in = Unkown;
           }
         }
       }
@@ -523,7 +531,7 @@ impl<'a> Doc<'a> {
             if let Some(meta) = &node.borrow().meta {
               let tag_name = &meta.borrow().name;
               if tag_name == &end_tag_name
-                || (is_html && tag_name.to_lowercase() == end_tag_name.to_lowercase())
+                || (is_html && tag_name.to_lowercase() == end_tag_name.trim_end().to_lowercase())
               {
                 is_tag_ended = true;
                 real_tag_node = Some(Rc::clone(node));
@@ -551,6 +559,7 @@ impl<'a> Doc<'a> {
               let mut current_node = self.current_node.borrow_mut();
               current_node.parent = Some(Rc::downgrade(&tag));
               current_node.depth = tag.borrow().depth;
+              current_node.content = Some(end_tag_name.chars().collect());
               // change the empty tags
               if empty_closed_tags.len() > 0 {
                 for tag_node in empty_closed_tags.iter_mut() {
@@ -608,7 +617,73 @@ impl<'a> Doc<'a> {
           self.prev_chars.push(c);
         }
       }
-      UnkownTag(begin_at) => {
+      HTMLScript(end_at, is_script) | HTMLStyle(end_at, is_script) => {
+        let end_tag = if is_script {
+          vec!['<', '/', 's', 'c', 'r', 'i', 'p', 't']
+        } else {
+          vec!['<', '/', 's', 't', 'y', 'l', 'e']
+        };
+        let total_len = end_tag.len();
+        let mut chars_len = self.prev_chars.len();
+        // parse html script tag and style tag
+        match c {
+          '<' => {
+            self.code_in = if is_script {
+              HTMLScript(self.position, is_script)
+            } else {
+              HTMLStyle(self.position, is_script)
+            };
+          }
+          '>'
+            if (chars_len == total_len && !self.prev_char.is_ascii_whitespace())
+              || chars_len > total_len =>
+          {
+            let mut matched_num = 0;
+            loop {
+              let prev_char = self.prev_chars[chars_len - 1];
+              // ignore end whitespace
+              if prev_char.is_ascii_whitespace() {
+                if matched_num != 0 {
+                  break;
+                }
+              } else {
+                if prev_char != end_tag[total_len - matched_num - 1] {
+                  break;
+                }
+                matched_num += 1;
+              }
+              chars_len -= 1;
+              if chars_len <= 0 || matched_num == total_len {
+                break;
+              }
+            }
+            if matched_num == total_len {
+              // find the matched
+              let end_tag_name = self.prev_chars.split_off(chars_len).split_off(2);
+              // add an end tag
+              let mut end = Node::new(NodeType::TagEnd, end_at);
+              end.end_at = self.position.next_col();
+              end.content = Some(end_tag_name);
+              end.depth = cur_depth;
+              end.parent = Some(Rc::downgrade(&self.current_node));
+              // set tag node's content, end_tag
+              let node = Rc::new(RefCell::new(end));
+              let mut current_node = self.current_node.borrow_mut();
+              current_node.end_tag = Some(Rc::clone(&node));
+              current_node.content = Some(self.prev_chars.clone());
+              self.nodes.push(node);
+              self.code_in = Unkown;
+            }
+          }
+          _ => {}
+        }
+        self.prev_chars.push(c);
+      }
+      UnkownTag(begin_at, prev_is_textnode) => {
+        if prev_is_textnode && is_xml && c != '/' {
+          // xml only allow pure text node
+          panic!("wrong tag node in a text node at {:?}", self.position);
+        }
         // check the tag type
         match c {
           'a'..='z' | 'A'..='Z' | '_' => {
@@ -782,12 +857,18 @@ impl<'a> Doc<'a> {
   }
   // end of the doc
   fn eof(&mut self) {
-    let cur_len = self.chain_nodes.len();
-    if cur_len > 1 {
-      let last_node = self.chain_nodes[cur_len - 1].borrow();
+    let cur_depth = self.chain_nodes.len();
+    // check if tags are all closed correctly.
+    if cur_depth > 1 {
+      let last_node = self.chain_nodes[cur_depth - 1].borrow();
       let begin_at = last_node.begin_at;
       let name = &last_node.meta.as_ref().unwrap().borrow().name;
       panic!("unclosed tag '{}' at {:?}", name, begin_at)
+    }
+    // fix last node depth
+    let mut last_node = self.nodes.last().unwrap().borrow_mut();
+    if last_node.node_type == NodeType::Text {
+      last_node.depth = cur_depth;
     }
   }
 }

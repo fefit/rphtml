@@ -15,3 +15,10 @@ path="src/lib.rs"
 [[bin]]
 name="chtml"
 path="src/main.rs"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "chtml_benchmark"
+harness = false
