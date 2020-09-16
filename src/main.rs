@@ -5,7 +5,7 @@ fn main() {
 	<!DOCTYPE html>
 	<html>
 		<head>
-			<meta charset="utf-8" />
+			<meta charset="utf-8">
 			<meta name="keywords" />
 		</head>
 		<body class="body" readonly>
@@ -14,7 +14,6 @@ fn main() {
 				world!
 			</div>
 		</body>
-	</html>
 	"#;
 	doc.parse(html);
 	/*let tag = r#"

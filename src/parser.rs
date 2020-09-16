@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::error::Error;
+use std::fmt;
 use std::rc::{Rc, Weak};
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
@@ -77,10 +78,17 @@ pub fn is_identity(chars: &Vec<char>, parser_type: &ParserType) -> bool {
 /**
  * the doc's position
 */
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
+}
+
+impl fmt::Debug for CodePosAt {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let output = format!("[line:{},col:{}]", self.line_no, self.col_no);
+    f.write_str(output.as_str())
+  }
 }
 
 impl CodePosAt {
@@ -125,7 +133,6 @@ pub struct Attr {
 
 /**
  * Tag
- * is_closed: if the tag is closed
  * is_end: if the tag end with '>'
  * self_closed: if the tag is self-closing '/>'
  * auto_fix: if the tag either self-closing nor closed with a end tag, may auto fix by the parser
@@ -136,7 +143,6 @@ pub struct Attr {
 #[derive(Debug)]
 pub struct TagMeta {
   pub tag_in: TagCodeIn,
-  pub is_closed: bool,
   pub is_end: bool,
   pub self_closed: bool,
   pub auto_fix: bool,
@@ -163,15 +169,16 @@ type RefNode<'a> = Rc<RefCell<Node<'a>>>;
  */
 #[derive(Debug)]
 pub struct Node<'a> {
-  pub tag_index: u32,
-  pub node_type: NodeType,                     // the node's type
-  pub start_at: CodePosAt,                     // the node's start position '<'
-  pub end_at: CodePosAt,                       // the node's end position '>'
-  pub end_tag: Option<RefNode<'a>>,            // the end tag </xx> of the tag node
+  pub tag_index: usize,             // if a tag node, add a index to the node
+  pub depth: usize,                 // the node's depth in the document
+  pub node_type: NodeType,          // the node's type
+  pub begin_at: CodePosAt,          // the node's start position '<'
+  pub end_at: CodePosAt,            // the node's end position '>'
+  pub end_tag: Option<RefNode<'a>>, // the end tag </xx> of the tag node
   pub parent: Option<Weak<RefCell<Node<'a>>>>, // parent node, use weak reference,prevent reference loop
   pub content: Option<Vec<char>>,              // the content,for text node/xml cdata/comment
   pub childs: Option<Vec<RefNode<'a>>>,        // the child nodes
-  pub meta: Option<RefCell<TagMeta>>,
+  pub meta: Option<RefCell<TagMeta>>,          // the tag node meta information
 }
 
 impl<'a> Node<'a> {
@@ -179,7 +186,7 @@ impl<'a> Node<'a> {
   pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
     return Node {
       node_type,
-      start_at: code_at,
+      begin_at: code_at,
       end_at: code_at,
       end_tag: None,
       parent: None,
@@ -187,6 +194,7 @@ impl<'a> Node<'a> {
       childs: None,
       meta: None,
       tag_index: 0,
+      depth: 0,
     };
   }
 }
@@ -201,7 +209,7 @@ pub struct Doc<'a> {
   prev_char: char,
   chain_nodes: Vec<RefNode<'a>>,
   current_node: RefNode<'a>,
-  tag_index: u32,
+  tag_index: usize,
   pub parser_type: ParserType,
   pub nodes: Vec<RefNode<'a>>,
 }
@@ -235,12 +243,17 @@ impl<'a> Doc<'a> {
     for c in content.chars() {
       self.next(c)?;
     }
+    self.eof();
     for (index, node) in self.nodes.iter().enumerate() {
       let node = node.borrow();
       println!(
-        "index:{}, node: {:?}, begin_at: {:?}, end_at:{:?}",
-        index, node.node_type, node.start_at, node.end_at
+        "index:{}, node: {:?}, depth:{}, begin:{:?}",
+        index, node.node_type, node.depth, node.begin_at
       );
+    }
+    for node in &self.chain_nodes {
+      let node = node.borrow();
+      println!("nodetype:{:?}", node.node_type);
     }
     Ok(())
   }
@@ -262,12 +275,19 @@ impl<'a> Doc<'a> {
     // check if text node end
     let mut is_text_node_end = false;
     // match all posible nodes
+    let cur_depth = self.chain_nodes.len();
+    // check if indepent node, a end tag is not indepent
+    let mut is_indepent_node = true;
     match self.code_in {
       TextNode | Unkown | AbstractRoot => {
         match c {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
             if self.code_in == TextNode {
+              if is_xml {
+                // can't contains tag in a xml text node
+                panic!("wrong tag node in a text node at {:?}", self.position);
+              }
               self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
               is_node_end = true;
               is_text_node_end = true;
@@ -276,6 +296,13 @@ impl<'a> Doc<'a> {
             self.prev_chars.clear();
           }
           _ => {
+            // only whitespace allowed
+            if cur_depth == 1 && !c.is_ascii_whitespace() {
+              panic!(
+                "a text node '{}...' should inside a tag node, at {:?}",
+                c, self.position
+              );
+            }
             if self.code_in != TextNode {
               // new text node
               new_node = Some(Rc::new(RefCell::new(Node::new(
@@ -321,7 +348,6 @@ impl<'a> Doc<'a> {
                   // self-closing tags
                   if tag_in_wait {
                     if self.prev_char == '/' {
-                      meta.is_closed = true;
                       meta.self_closed = true;
                       // remove from the chain nodes
                       self.chain_nodes.pop();
@@ -458,7 +484,7 @@ impl<'a> Doc<'a> {
                 }
               }
               if !is_identity(&self.prev_chars, &self.parser_type) {
-                panic!("un correct identity：{}", tag_name);
+                panic!("incorrect identity：{}", tag_name);
               }
               let meta = TagMeta {
                 name: tag_name,
@@ -466,7 +492,6 @@ impl<'a> Doc<'a> {
                 attr_index: -1,
                 auto_fix: false,
                 self_closed: false,
-                is_closed: false,
                 tag_in: TagCodeIn::Wait,
                 prev_is_key: false,
                 is_end: false,
@@ -498,14 +523,14 @@ impl<'a> Doc<'a> {
             if let Some(meta) = &node.borrow().meta {
               let tag_name = &meta.borrow().name;
               if tag_name == &end_tag_name
-                || (self.parser_type == ParserType::HTML
-                  && tag_name.to_lowercase() == end_tag_name.to_lowercase())
+                || (is_html && tag_name.to_lowercase() == end_tag_name.to_lowercase())
               {
                 is_tag_ended = true;
                 real_tag_node = Some(Rc::clone(node));
                 // todo: set the end tag
                 break;
-              } else if is_allow_fix {
+              }
+              if is_allow_fix {
                 // html void element: https://www.w3.org/TR/2011/WD-html-markup-20110113/syntax.html
                 empty_closed_tags.push(Rc::clone(node));
               }
@@ -523,32 +548,42 @@ impl<'a> Doc<'a> {
             if let Some(tag) = &real_tag_node {
               // set end tag for the tag node
               tag.borrow_mut().end_tag = Some(Rc::clone(&self.current_node));
+              let mut current_node = self.current_node.borrow_mut();
+              current_node.parent = Some(Rc::downgrade(&tag));
+              current_node.depth = tag.borrow().depth;
               // change the empty tags
               if empty_closed_tags.len() > 0 {
                 for tag_node in empty_closed_tags.iter_mut() {
+                  let mut tag_node = tag_node.borrow_mut();
                   // change the parent node
-                  tag_node.borrow_mut().parent = Some(Rc::downgrade(tag));
+                  tag_node.parent = Some(Rc::downgrade(tag));
+                  // set it's meta as auto fix
+                  if let Some(meta) = &tag_node.meta {
+                    let mut meta = meta.borrow_mut();
+                    meta.auto_fix = true;
+                  }
                   // change all childs's parent and clear
-                  if let Some(childs) = &tag_node.borrow_mut().childs {
+                  if let Some(childs) = &tag_node.childs {
                     if childs.len() > 0 {
                       for child_node in childs.iter() {
-                        child_node.borrow_mut().parent = Some(Rc::downgrade(tag));
+                        let mut child_node = child_node.borrow_mut();
+                        child_node.parent = Some(Rc::downgrade(tag));
+                        child_node.depth -= back_num;
                       }
                     }
                   }
-                  tag_node.borrow_mut().childs = None;
+                  // clear childs
+                  tag_node.childs = None;
                 }
               }
             }
             // remove the matched tag from the chain nodes
-            self
-              .chain_nodes
-              .truncate(self.chain_nodes.len() - back_num - 1);
+            self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
             panic!(
               "wrong end tag '</{}>' at {:?}",
               end_tag_name,
-              self.current_node.borrow().start_at
+              self.current_node.borrow().begin_at
             );
           }
         } else {
@@ -578,7 +613,7 @@ impl<'a> Doc<'a> {
         match c {
           'a'..='z' | 'A'..='Z' | '_' => {
             // only xml tag can begin with underscore
-            if c == '_' && self.parser_type != ParserType::XML {
+            if c == '_' && !is_xml {
               panic!("wrong start tag <_ as {:?}", begin_at);
             }
             // new tag node, add tag_index
@@ -593,6 +628,7 @@ impl<'a> Doc<'a> {
           '/' => {
             // new tag end
             new_node = Some(Rc::new(RefCell::new(Node::new(NodeType::TagEnd, begin_at))));
+            is_indepent_node = false;
             self.code_in = TagEnd;
           }
           '?' => {
@@ -666,11 +702,11 @@ impl<'a> Doc<'a> {
             '-' => {
               self.code_in = ExclamationBegin(begin_at, Some(vec!['-', '-']));
             }
-            'D' if self.parser_type == ParserType::HTML => {
+            'D' if is_html => {
               self.code_in =
                 ExclamationBegin(begin_at, Some(vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']));
             }
-            '[' if self.parser_type == ParserType::XML => {
+            '[' if is_xml => {
               self.code_in =
                 ExclamationBegin(begin_at, Some(vec!['[', 'C', 'D', 'A', 'T', 'A', '[']));
             }
@@ -684,11 +720,15 @@ impl<'a> Doc<'a> {
     }
     // set the end tag position
     if is_node_end {
-      self.current_node.borrow_mut().end_at = if is_text_node_end {
+      let mut current_node = self.current_node.borrow_mut();
+      current_node.end_at = if is_text_node_end {
         self.position
       } else {
         self.position.next_col()
       };
+      if is_indepent_node {
+        current_node.depth = cur_depth;
+      }
     }
     // do with the position
     {
@@ -714,7 +754,7 @@ impl<'a> Doc<'a> {
     }
     // has a new node
     if let Some(node) = new_node {
-      {
+      if is_indepent_node {
         // set parent node
         let parent_node = self.chain_nodes.last().unwrap();
         node.borrow_mut().parent = Some(Rc::downgrade(parent_node));
@@ -739,5 +779,15 @@ impl<'a> Doc<'a> {
     // set the previous char
     self.prev_char = c;
     Ok(())
+  }
+  // end of the doc
+  fn eof(&mut self) {
+    let cur_len = self.chain_nodes.len();
+    if cur_len > 1 {
+      let last_node = self.chain_nodes[cur_len - 1].borrow();
+      let begin_at = last_node.begin_at;
+      let name = &last_node.meta.as_ref().unwrap().borrow().name;
+      panic!("unclosed tag '{}' at {:?}", name, begin_at)
+    }
   }
 }
