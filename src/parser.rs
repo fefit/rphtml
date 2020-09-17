@@ -1,9 +1,40 @@
+use lazy_static::lazy_static;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::env;
 use std::error::Error;
 use std::fmt;
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufReader;
+use std::path::Path;
 use std::rc::{Rc, Weak};
+
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
+
+#[derive(PartialEq, Eq, Hash)]
+pub enum DetectChar {
+  Comment,
+  DOCTYPE,
+  CDATA,
+  Script,
+  Style,
+}
+
+lazy_static! {
+  static ref DETECTCHARMAP: HashMap<DetectChar, Vec<char>> = {
+    use DetectChar::*;
+    let mut map = HashMap::new();
+    map.insert(Comment, vec!['-', '-']);
+    map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
+    map.insert(CDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
+    map.insert(Script, vec!['<', '/', 's', 'c', 'r', 'i', 'p', 't']);
+    map.insert(Style, vec!['<', '/', 's', 't', 'y', 'l', 'e']);
+    map
+  };
+}
+
 /**
  * ParserType
  * HTML: for html
@@ -18,7 +49,7 @@ pub enum ParserType {
 #[derive(PartialEq, Debug)]
 pub enum NodeType {
   Comment,      // comment
-  HTMLDoctype,  // html doctype
+  HTMLDOCTYPE,  // html doctype
   XMLDeclare,   // xml declare
   XMLCDATA,     // xml cdata
   Tag,          // the start tag\self-closing tag\autofix empty tag
@@ -29,19 +60,19 @@ pub enum NodeType {
 
 #[derive(PartialEq)]
 enum CodeTypeIn {
-  AbstractRoot,               // abstract root node,the begin node of document
-  Unkown,                     // wait for detect node
-  UnkownTag(CodePosAt, bool), // is a tag begin with '<', but need more diagnosis
-  Tag,                        // the start tag\self-closing tag\autofix empty tag
-  TagEnd,                     // the end tag
-  ExclamationBegin(CodePosAt, Option<Vec<char>>), // tag begin with '!' maybe Comment|XMLCDATA|HTMLDoctype
-  Comment,                                        // comment tag
-  HTMLDoctype,                                    // html doctype
-  HTMLScript(CodePosAt, bool),                    // html script
-  HTMLStyle(CodePosAt, bool),                     // html css style
-  XMLCDATA,                                       // xml cdata data
-  XMLDeclare,                                     // xml declare
-  TextNode,                                       // text node
+  AbstractRoot,     // abstract root node,the begin node of document
+  Unkown,           // wait for detect node
+  UnkownTag,        // is a tag begin with '<', but need more diagnosis
+  Tag,              // the start tag\self-closing tag\autofix empty tag
+  TagEnd,           // the end tag
+  ExclamationBegin, // tag begin with '!' maybe Comment|XMLCDATA|HTMLDOCTYPE
+  Comment,          // comment tag
+  HTMLDOCTYPE,      // html doctype
+  HTMLScript,       // html script
+  HTMLStyle,        // html css style
+  XMLCDATA,         // xml cdata data
+  XMLDeclare,       // xml declare
+  TextNode,         // text node
 }
 
 pub fn is_identity(chars: &Vec<char>, parser_type: &ParserType) -> bool {
@@ -207,6 +238,9 @@ impl<'a> Node<'a> {
 pub struct Doc<'a> {
   code_in: CodeTypeIn,
   position: CodePosAt,
+  mem_position: CodePosAt,
+  mem_code_in: CodeTypeIn,
+  detect: Option<DetectChar>,
   prev_chars: Vec<char>,
   prev_char: char,
   chain_nodes: Vec<RefNode<'a>>,
@@ -214,6 +248,7 @@ pub struct Doc<'a> {
   tag_index: usize,
   pub parser_type: ParserType,
   pub nodes: Vec<RefNode<'a>>,
+  pub root_node: RefNode<'a>,
 }
 impl<'a> Doc<'a> {
   // create new parser
@@ -224,6 +259,7 @@ impl<'a> Doc<'a> {
     )));
     let ref_node = Rc::clone(&node);
     let current_node = Rc::clone(&node);
+    let root_node = Rc::clone(&node);
     let mut nodes = Vec::with_capacity(10);
     let mut chain_nodes = Vec::with_capacity(10);
     nodes.push(node);
@@ -231,28 +267,55 @@ impl<'a> Doc<'a> {
     Doc {
       code_in: CodeTypeIn::AbstractRoot,
       position: CodePosAt::begin(),
+      mem_position: CodePosAt::begin(),
+      mem_code_in: CodeTypeIn::AbstractRoot,
       prev_char: ' ',
-      prev_chars: Vec::with_capacity(30),
+      prev_chars: Vec::with_capacity(200),
       parser_type,
       nodes,
       chain_nodes,
       current_node,
       tag_index: 0,
+      detect: None,
+      root_node,
     }
   }
   // parse with string
-  pub fn parse(&mut self, content: &str) -> Result<(), Box<dyn Error>> {
+  pub fn parse(&mut self, content: &str) {
     for c in content.chars() {
-      self.next(c)?;
+      self.next(c);
+    }
+    self.eof();
+  }
+
+  // parse file
+  pub fn parse_file<P>(&mut self, filename: P) -> Result<(), Box<dyn Error>>
+  where
+    P: AsRef<Path>,
+  {
+    let file_path = filename.as_ref();
+    let file_path = if file_path.is_absolute() {
+      file_path.to_path_buf()
+    } else {
+      env::current_dir()?.join(filename).canonicalize().unwrap()
+    };
+    let file = File::open(file_path)?;
+    let file = BufReader::new(file);
+    for line in file.lines() {
+      for c in line.unwrap().chars() {
+        self.next(c);
+      }
     }
     self.eof();
     Ok(())
   }
+  // gather previous charecters
   fn chars_to_string(&self) -> String {
     self.prev_chars.iter().collect::<String>()
   }
+
   // read one char
-  fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
+  fn next(&mut self, c: char) {
     let is_html = self.parser_type == ParserType::HTML;
     let is_xml = !is_html;
     // add all CodeTypeIn enum item to namespace
@@ -274,14 +337,14 @@ impl<'a> Doc<'a> {
         match c {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
-            let mut prev_is_textnode = false;
             if self.code_in == TextNode {
-              prev_is_textnode = true;
+              self.mem_code_in = TextNode;
               self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
               is_node_end = true;
               is_text_node_end = true;
             }
-            self.code_in = UnkownTag(self.position, prev_is_textnode);
+            self.mem_position = self.position;
+            self.code_in = UnkownTag;
             self.prev_chars.clear();
           }
           _ => {
@@ -305,7 +368,7 @@ impl<'a> Doc<'a> {
           }
         }
       }
-      Tag | HTMLDoctype | XMLDeclare => {
+      Tag | HTMLDOCTYPE | XMLDeclare => {
         let is_whitespace = c.is_ascii_whitespace();
         let is_end = if is_whitespace {
           false
@@ -462,7 +525,7 @@ impl<'a> Doc<'a> {
               if is_whitespace {
                 if self.code_in == XMLDeclare && cur_tag_name != "xml" {
                   panic!("wrong xml declare:{}", cur_tag_name);
-                } else if self.code_in == HTMLDoctype && cur_tag_name != "DOCTYPE" {
+                } else if self.code_in == HTMLDOCTYPE && cur_tag_name != "DOCTYPE" {
                   panic!("wrong html doctype:{}", cur_tag_name);
                 }
               } else {
@@ -471,7 +534,7 @@ impl<'a> Doc<'a> {
                 }
                 match self.code_in {
                   XMLDeclare => panic!("wrong xml declare"),
-                  HTMLDoctype => panic!("wrong html doctype"),
+                  HTMLDOCTYPE => panic!("wrong html doctype"),
                   Tag => {
                     // tag end
                     is_node_end = true;
@@ -503,8 +566,14 @@ impl<'a> Doc<'a> {
         if is_node_end {
           if is_in_tag && is_html {
             match tag_name.to_lowercase().as_str() {
-              "script" => self.code_in = HTMLScript(self.position, true),
-              "style" => self.code_in = HTMLStyle(self.position, false),
+              name @ "script" | name @ "style" => {
+                self.mem_position = self.position;
+                self.code_in = if name == "script" {
+                  HTMLScript
+                } else {
+                  HTMLStyle
+                };
+              }
               _ => self.code_in = Unkown,
             }
             self.prev_chars.clear();
@@ -599,40 +668,19 @@ impl<'a> Doc<'a> {
           self.prev_chars.push(c);
         }
       }
-      Comment | XMLCDATA => {
-        // comment node or xml cdata node
-        let mut is_end = false;
-        let end_symbol = if self.code_in == Comment { '-' } else { ']' };
-        if c == '>' && self.prev_char == end_symbol && self.prev_chars.len() >= 2 {
-          let total_len = self.prev_chars.len();
-          let prev_last_char = self.prev_chars[total_len - 2];
-          if prev_last_char == end_symbol {
-            is_end = true;
-            self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
-            is_node_end = true;
-            self.code_in = Unkown;
-          }
-        }
-        if !is_end {
-          self.prev_chars.push(c);
-        }
-      }
-      HTMLScript(end_at, is_script) | HTMLStyle(end_at, is_script) => {
-        let end_tag = if is_script {
-          vec!['<', '/', 's', 'c', 'r', 'i', 'p', 't']
+      HTMLScript | HTMLStyle => {
+        let detect_type = if self.code_in == HTMLScript {
+          DetectChar::Script
         } else {
-          vec!['<', '/', 's', 't', 'y', 'l', 'e']
+          DetectChar::Style
         };
+        let end_tag = DETECTCHARMAP.get(&detect_type).unwrap();
         let total_len = end_tag.len();
         let mut chars_len = self.prev_chars.len();
         // parse html script tag and style tag
         match c {
           '<' => {
-            self.code_in = if is_script {
-              HTMLScript(self.position, is_script)
-            } else {
-              HTMLStyle(self.position, is_script)
-            };
+            self.mem_position = self.position;
           }
           '>'
             if (chars_len == total_len && !self.prev_char.is_ascii_whitespace())
@@ -658,6 +706,7 @@ impl<'a> Doc<'a> {
               }
             }
             if matched_num == total_len {
+              let end_at = self.mem_position;
               // find the matched
               let end_tag_name = self.prev_chars.split_off(chars_len).split_off(2);
               // add an end tag
@@ -672,14 +721,37 @@ impl<'a> Doc<'a> {
               current_node.end_tag = Some(Rc::clone(&node));
               current_node.content = Some(self.prev_chars.clone());
               self.nodes.push(node);
+              // remove current tag
+              self.chain_nodes.pop();
               self.code_in = Unkown;
+              self.detect = None;
             }
           }
           _ => {}
         }
         self.prev_chars.push(c);
       }
-      UnkownTag(begin_at, prev_is_textnode) => {
+      Comment | XMLCDATA => {
+        // comment node or xml cdata node
+        let mut is_end = false;
+        let end_symbol = if self.code_in == Comment { '-' } else { ']' };
+        if c == '>' && self.prev_char == end_symbol && self.prev_chars.len() >= 2 {
+          let total_len = self.prev_chars.len();
+          let prev_last_char = self.prev_chars[total_len - 2];
+          if prev_last_char == end_symbol {
+            is_end = true;
+            self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+            is_node_end = true;
+            self.code_in = Unkown;
+          }
+        }
+        if !is_end {
+          self.prev_chars.push(c);
+        }
+      }
+      UnkownTag => {
+        let prev_is_textnode = self.mem_code_in == TextNode;
+        let begin_at = self.mem_position;
         if prev_is_textnode && is_xml && c != '/' {
           // xml only allow pure text node
           panic!("wrong tag node in a text node at {:?}", self.position);
@@ -720,16 +792,19 @@ impl<'a> Doc<'a> {
           }
           '!' => {
             // Comment|DOCTYPE|XMLCDATA
-            self.code_in = ExclamationBegin(begin_at, None);
+            self.code_in = ExclamationBegin;
+            self.mem_position = begin_at;
           }
           _ => {
             panic!("wrong tag in {:?}, <{}", begin_at, c);
           }
         };
       }
-      ExclamationBegin(begin_at, ref char_queue) => {
+      ExclamationBegin => {
         // maybe Comment | CDATA<XML> | DOCTYPE<HTML>
-        if let Some(next_chars) = char_queue {
+        let begin_at = self.mem_position;
+        if let Some(detect) = &self.detect {
+          let next_chars = DETECTCHARMAP.get(detect).unwrap();
           let total_len = self.prev_chars.len();
           let actual_len = next_chars.len();
           if total_len < actual_len {
@@ -746,10 +821,10 @@ impl<'a> Doc<'a> {
                     ))));
                   }
                   'E' => {
-                    self.code_in = HTMLDoctype;
+                    self.code_in = HTMLDOCTYPE;
                     // new html doctype node
                     new_node = Some(Rc::new(RefCell::new(Node::new(
-                      NodeType::HTMLDoctype,
+                      NodeType::HTMLDOCTYPE,
                       begin_at,
                     ))));
                   }
@@ -763,6 +838,7 @@ impl<'a> Doc<'a> {
                   }
                   _ => unreachable!(),
                 };
+                self.detect = None;
               }
             } else {
               panic!(
@@ -775,15 +851,13 @@ impl<'a> Doc<'a> {
         } else {
           match c {
             '-' => {
-              self.code_in = ExclamationBegin(begin_at, Some(vec!['-', '-']));
+              self.detect = Some(DetectChar::Comment);
             }
             'D' if is_html => {
-              self.code_in =
-                ExclamationBegin(begin_at, Some(vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']));
+              self.detect = Some(DetectChar::DOCTYPE);
             }
             '[' if is_xml => {
-              self.code_in =
-                ExclamationBegin(begin_at, Some(vec!['[', 'C', 'D', 'A', 'T', 'A', '[']));
+              self.detect = Some(DetectChar::CDATA);
             }
             _ => {
               panic!("unrecognized tag '<!{}' at {:?}", c, begin_at);
@@ -853,7 +927,6 @@ impl<'a> Doc<'a> {
     }
     // set the previous char
     self.prev_char = c;
-    Ok(())
   }
   // end of the doc
   fn eof(&mut self) {
