@@ -1,5 +1,5 @@
-use chtml::parser::*;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use rxhtml::parser::*;
 fn parse_doc() {
 	let mut doc = Doc::new(ParserType::HTML);
 	doc.parse_file("./cases/full.html");

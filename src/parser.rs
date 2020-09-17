@@ -248,8 +248,9 @@ pub struct Doc<'a> {
   tag_index: usize,
   pub parser_type: ParserType,
   pub nodes: Vec<RefNode<'a>>,
-  pub root_node: RefNode<'a>,
+  pub root: RefNode<'a>,
 }
+
 impl<'a> Doc<'a> {
   // create new parser
   pub fn new(parser_type: ParserType) -> Self {
@@ -259,7 +260,7 @@ impl<'a> Doc<'a> {
     )));
     let ref_node = Rc::clone(&node);
     let current_node = Rc::clone(&node);
-    let root_node = Rc::clone(&node);
+    let root = Rc::clone(&node);
     let mut nodes = Vec::with_capacity(10);
     let mut chain_nodes = Vec::with_capacity(10);
     nodes.push(node);
@@ -277,7 +278,7 @@ impl<'a> Doc<'a> {
       current_node,
       tag_index: 0,
       detect: None,
-      root_node,
+      root,
     }
   }
   // parse with string
