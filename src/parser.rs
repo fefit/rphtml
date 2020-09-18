@@ -1,4 +1,5 @@
 use lazy_static::lazy_static;
+use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
@@ -12,6 +13,12 @@ use std::rc::{Rc, Weak};
 
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
+
+#[derive(Debug)]
+pub struct ParseError {
+  pub position: CodePosAt,
+  pub node_type: Option<NodeType>,
+}
 
 #[derive(PartialEq, Eq, Hash)]
 pub enum DetectChar {
@@ -46,7 +53,7 @@ pub enum ParserType {
   XML,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Serialize)]
 pub enum NodeType {
   Comment,      // comment
   HTMLDOCTYPE,  // html doctype
@@ -111,7 +118,7 @@ pub fn is_identity(chars: &Vec<char>, parser_type: &ParserType) -> bool {
 /**
  * the doc's position
 */
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Serialize)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
@@ -157,7 +164,7 @@ impl CodePosAt {
  * if value is None, it's a boolean attribute
  * if key is None,it's a value with quote
  */
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct Attr {
   pub key: Option<String>,
   pub value: Option<String>,
@@ -173,7 +180,7 @@ pub struct Attr {
  * attrs: the attribute list
  * attr_index: the current attribute index of the 'attrs'
 */
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TagMeta {
   pub tag_in: TagCodeIn,
   pub is_end: bool,
@@ -187,7 +194,7 @@ pub struct TagMeta {
   pub is_in_translate: bool,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Serialize)]
 pub enum TagCodeIn {
   Wait,
   Key,
@@ -200,7 +207,7 @@ type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  * Node
  */
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Node<'a> {
   pub tag_index: usize,             // if a tag node, add a index to the node
   pub depth: usize,                 // the node's depth in the document
@@ -281,6 +288,14 @@ impl<'a> Doc<'a> {
       root,
     }
   }
+  // for serde, remove cycle reference
+  pub fn to_json(&mut self) {
+    for node in &mut self.nodes {
+      let mut node = node.borrow_mut();
+      node.parent = None;
+    }
+  }
+
   // parse with string
   pub fn parse(&mut self, content: &str) {
     for c in content.chars() {

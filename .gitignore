@@ -6,3 +6,9 @@ Cargo.lock
 
 # rust build files
 /target
+
+# wasm package files
+/pkg
+
+# ignore node_modules
+node_modules/
