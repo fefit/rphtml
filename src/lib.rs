@@ -1,7 +1,7 @@
 use parser::{Doc, ParserType};
 use wasm_bindgen::prelude::*;
+pub mod config;
 pub mod parser;
-
 fn create_instance(xml: bool) -> Doc<'static> {
   let parser_type = if xml {
     ParserType::XML
@@ -11,18 +11,18 @@ fn create_instance(xml: bool) -> Doc<'static> {
   Doc::new(parser_type)
 }
 
-#[wasm_bindgen]
-pub fn parse(content: &str, xml: bool) -> JsValue {
+#[wasm_bindgen(catch)]
+pub fn parse(content: &str, xml: bool) -> Result<JsValue, JsValue> {
   let mut doc = create_instance(xml);
-  let _ = doc.parse(content);
+  match doc.parse(content) {
+    Ok(_) => {}
+    Err(e) => {
+      return Err(JsValue::from_str(&e.to_string()));
+    }
+  }
   doc.to_json();
-  JsValue::from_serde(&doc.root).unwrap()
-}
-
-#[wasm_bindgen]
-pub fn parse_file(file: &str, xml: bool) -> JsValue {
-  let mut doc = create_instance(xml);
-  let _ = doc.parse_file(file);
-  doc.to_json();
-  JsValue::from_serde(&doc.root).unwrap()
+  match JsValue::from_serde(&doc.root) {
+    Ok(result) => Ok(result),
+    Err(e) => Err(JsValue::from_str(&e.to_string())),
+  }
 }

@@ -13,5 +13,3 @@ const htmlStrNodes = rxhtml.parse(`
     </html>
 `);
 console.log(htmlStrNodes);
-const htmlFileNodes = rxhtml.parse_file("./cases/full.html");
-console.log(htmlFileNodes);

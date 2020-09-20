@@ -1,3 +1,4 @@
+use crate::config;
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::cell::RefCell;
@@ -10,14 +11,69 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::Path;
 use std::rc::{Rc, Weak};
-
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
 
 #[derive(Debug)]
 pub struct ParseError {
   pub position: CodePosAt,
-  pub node_type: Option<NodeType>,
+  pub kind: ErrorKind,
+}
+
+impl ParseError {
+  pub fn new(kind: ErrorKind, position: CodePosAt) -> Self {
+    ParseError { position, kind }
+  }
+}
+
+// display parse error
+impl fmt::Display for ParseError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use ErrorKind::*;
+    let position = self.position;
+    let output = match &self.kind {
+      WrongTag(tag) => format!("wrong tag '<{}' at {:?}", tag, position),
+      WrongEndTag(tag) => format!("wrong end tag '</{}' at {:?}", tag, position),
+      UnmatchedClosedTag(tag) => format!("unmatched tag '</{}>' at {:?}", tag, position),
+      UnclosedTag(tag) => format!("unclosed tag '<{}' at {:?}", tag, position),
+      WrongXmlTagInTextNode(c) => {
+        format!("wrong xml tag '<{}' in a text node at {:?}", c, position)
+      }
+      WrongXmlDeclare(c) => format!("wrong xml declaration character '{}' at {:?}", c, position),
+      WrongHtmlDoctype(c) => format!("wrong html doctype character '{}' at {:?}", c, position),
+      NoSpaceBetweenAttr(c) => format!(
+        "the tag's attribute '{}' should after a space.{:?}",
+        c, position
+      ),
+      UnrecognizedTag(finded, maybe) => format!(
+        "unrecognized tag '{}' at {:?}, do you mean '{}'",
+        finded, position, maybe
+      ),
+      WrongTagIdentity(ident) => format!("wrong tag name '{}' at {:?}", ident, position),
+      WrongRootTextNode(text) => format!("wrong text '{}...' in root node at {:?}", text, position),
+      UnexpectedCharacter(c) => format!("unexpected character '{}' at {:?}", c, position),
+    };
+    f.write_str(output.as_str())
+  }
+}
+
+// impl trait Error
+impl Error for ParseError {}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+  WrongTag(String),
+  WrongEndTag(String),
+  UnmatchedClosedTag(String),
+  UnexpectedCharacter(char),
+  UnclosedTag(String),
+  NoSpaceBetweenAttr(char),
+  WrongXmlTagInTextNode(char),
+  WrongXmlDeclare(char),
+  WrongHtmlDoctype(char),
+  UnrecognizedTag(String, String),
+  WrongTagIdentity(String),
+  WrongRootTextNode(String),
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -297,11 +353,12 @@ impl<'a> Doc<'a> {
   }
 
   // parse with string
-  pub fn parse(&mut self, content: &str) {
+  pub fn parse(&mut self, content: &str) -> Result<(), Box<dyn Error>> {
     for c in content.chars() {
-      self.next(c);
+      self.next(c)?;
     }
-    self.eof();
+    self.eof()?;
+    Ok(())
   }
 
   // parse file
@@ -319,19 +376,19 @@ impl<'a> Doc<'a> {
     let file = BufReader::new(file);
     for line in file.lines() {
       for c in line.unwrap().chars() {
-        self.next(c);
+        self.next(c)?;
       }
     }
-    self.eof();
+    self.eof()?;
     Ok(())
   }
-  // gather previous charecters
+  // gather previous characters
   fn chars_to_string(&self) -> String {
     self.prev_chars.iter().collect::<String>()
   }
 
   // read one char
-  fn next(&mut self, c: char) {
+  fn next(&mut self, c: char) -> Result<(), ParseError> {
     let is_html = self.parser_type == ParserType::HTML;
     let is_xml = !is_html;
     // add all CodeTypeIn enum item to namespace
@@ -366,10 +423,10 @@ impl<'a> Doc<'a> {
           _ => {
             // only whitespace allowed
             if cur_depth == 1 && !c.is_ascii_whitespace() {
-              panic!(
-                "a text node '{}...' should inside a tag node, at {:?}",
-                c, self.position
-              );
+              return Err(ParseError::new(
+                ErrorKind::WrongRootTextNode(c.to_string()),
+                self.position,
+              ));
             }
             if self.code_in != TextNode {
               // new text node
@@ -406,7 +463,10 @@ impl<'a> Doc<'a> {
                 let mut is_end_key_or_value = false;
                 // tag in wait, if prev char is '?' or '/', the current char must be the end of tag
                 if tag_in_wait && (self.prev_char == '?' || self.prev_char == '/') && !is_end {
-                  panic!("wrong label {}{} at {:?}", self.prev_char, c, self.position);
+                  return Err(ParseError::new(
+                    ErrorKind::UnexpectedCharacter(c),
+                    self.position,
+                  ));
                 }
                 if is_whitespace {
                   // if tag in wait state, ignore whitespaces, otherwise, is an end of key or value
@@ -437,10 +497,10 @@ impl<'a> Doc<'a> {
                       // if not in kv
                       if !meta.is_in_kv {
                         if !self.prev_char.is_ascii_whitespace() {
-                          panic!(
-                            "no whitespace in tag '<{}' between attributes at {:?}",
-                            meta.name, self.position
-                          );
+                          return Err(ParseError::new(
+                            ErrorKind::NoSpaceBetweenAttr(c),
+                            self.position,
+                          ));
                         }
                         meta.attr_index += 1;
                       } else {
@@ -457,14 +517,25 @@ impl<'a> Doc<'a> {
                     }
                     '?' | '/' | '=' => {
                       if c == '?' && self.code_in != XMLDeclare {
-                        panic!("wrong tag ?");
-                      } else if c == '/' && self.code_in != Tag {
-                        panic!("wrong tag end /");
-                      } else if c == '=' {
+                        return Err(ParseError::new(
+                          ErrorKind::WrongTag(String::from("?")),
+                          self.position,
+                        ));
+                      }
+                      if c == '/' && self.code_in != Tag {
+                        return Err(ParseError::new(
+                          ErrorKind::WrongTag(String::from("/")),
+                          self.position,
+                        ));
+                      }
+                      if c == '=' {
                         if meta.prev_is_key {
                           meta.is_in_kv = true;
                         } else {
-                          panic!("wrong =");
+                          return Err(ParseError::new(
+                            ErrorKind::WrongTag(String::from("=")),
+                            self.position,
+                          ));
                         }
                       }
                       if !tag_in_wait {
@@ -537,20 +608,36 @@ impl<'a> Doc<'a> {
           }
           None => {
             if is_whitespace || is_end {
-              let cur_tag_name: String = self.prev_chars.iter().collect();
+              let cur_tag_name: String = self.chars_to_string();
               if is_whitespace {
                 if self.code_in == XMLDeclare && cur_tag_name != "xml" {
-                  panic!("wrong xml declare:{}", cur_tag_name);
+                  return Err(ParseError::new(
+                    ErrorKind::WrongXmlDeclare(c),
+                    self.position,
+                  ));
                 } else if self.code_in == HTMLDOCTYPE && cur_tag_name != "DOCTYPE" {
-                  panic!("wrong html doctype:{}", cur_tag_name);
+                  return Err(ParseError::new(
+                    ErrorKind::WrongHtmlDoctype(c),
+                    self.position,
+                  ));
                 }
               } else {
                 if is_in_tag {
                   tag_name = cur_tag_name.clone();
                 }
                 match self.code_in {
-                  XMLDeclare => panic!("wrong xml declare"),
-                  HTMLDOCTYPE => panic!("wrong html doctype"),
+                  XMLDeclare => {
+                    return Err(ParseError::new(
+                      ErrorKind::WrongXmlDeclare(c),
+                      self.position,
+                    ))
+                  }
+                  HTMLDOCTYPE => {
+                    return Err(ParseError::new(
+                      ErrorKind::WrongHtmlDoctype(c),
+                      self.position,
+                    ))
+                  }
                   Tag => {
                     // tag end
                     is_node_end = true;
@@ -559,7 +646,10 @@ impl<'a> Doc<'a> {
                 }
               }
               if !is_identity(&self.prev_chars, &self.parser_type) {
-                panic!("incorrect identity：{}", cur_tag_name);
+                return Err(ParseError::new(
+                  ErrorKind::WrongTagIdentity(cur_tag_name),
+                  self.position,
+                ));
               }
               let meta = TagMeta {
                 name: cur_tag_name,
@@ -674,11 +764,10 @@ impl<'a> Doc<'a> {
             // remove the matched tag from the chain nodes
             self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
-            panic!(
-              "wrong end tag '</{}>' at {:?}",
-              end_tag_name,
-              self.current_node.borrow().begin_at
-            );
+            return Err(ParseError::new(
+              ErrorKind::WrongEndTag(end_tag_name),
+              self.current_node.borrow().begin_at,
+            ));
           }
         } else {
           self.prev_chars.push(c);
@@ -770,14 +859,20 @@ impl<'a> Doc<'a> {
         let begin_at = self.mem_position;
         if prev_is_textnode && is_xml && c != '/' {
           // xml only allow pure text node
-          panic!("wrong tag node in a text node at {:?}", self.position);
+          return Err(ParseError::new(
+            ErrorKind::WrongXmlTagInTextNode(c),
+            self.position,
+          ));
         }
         // check the tag type
         match c {
           'a'..='z' | 'A'..='Z' | '_' => {
             // only xml tag can begin with underscore
             if c == '_' && !is_xml {
-              panic!("wrong start tag <_ as {:?}", begin_at);
+              return Err(ParseError::new(
+                ErrorKind::WrongTag(c.to_string()),
+                begin_at,
+              ));
             }
             // new tag node, add tag_index
             let mut inner_node = Node::new(NodeType::Tag, begin_at);
@@ -803,7 +898,10 @@ impl<'a> Doc<'a> {
               ))));
               self.code_in = XMLDeclare;
             } else {
-              panic!("unrecognized tag <? at {:?}", begin_at);
+              return Err(ParseError::new(
+                ErrorKind::WrongTag(c.to_string()),
+                begin_at,
+              ));
             }
           }
           '!' => {
@@ -812,7 +910,10 @@ impl<'a> Doc<'a> {
             self.mem_position = begin_at;
           }
           _ => {
-            panic!("wrong tag in {:?}, <{}", begin_at, c);
+            return Err(ParseError::new(
+              ErrorKind::WrongTag(c.to_string()),
+              begin_at,
+            ));
           }
         };
       }
@@ -857,11 +958,13 @@ impl<'a> Doc<'a> {
                 self.detect = None;
               }
             } else {
-              panic!(
-                "wrong label at {:?}，do you mean the label '<!{}'",
+              return Err(ParseError::new(
+                ErrorKind::UnrecognizedTag(
+                  self.chars_to_string(),
+                  next_chars.iter().collect::<String>(),
+                ),
                 begin_at,
-                next_chars.iter().collect::<String>()
-              );
+              ));
             }
           }
         } else {
@@ -876,7 +979,10 @@ impl<'a> Doc<'a> {
               self.detect = Some(DetectChar::CDATA);
             }
             _ => {
-              panic!("unrecognized tag '<!{}' at {:?}", c, begin_at);
+              return Err(ParseError::new(
+                ErrorKind::WrongTag(self.chars_to_string()),
+                begin_at,
+              ));
             }
           };
         }
@@ -943,21 +1049,27 @@ impl<'a> Doc<'a> {
     }
     // set the previous char
     self.prev_char = c;
+    // parse ok
+    Ok(())
   }
   // end of the doc
-  fn eof(&mut self) {
+  fn eof(&mut self) -> Result<(), ParseError> {
     let cur_depth = self.chain_nodes.len();
     // check if tags are all closed correctly.
     if cur_depth > 1 {
       let last_node = self.chain_nodes[cur_depth - 1].borrow();
       let begin_at = last_node.begin_at;
       let name = &last_node.meta.as_ref().unwrap().borrow().name;
-      panic!("unclosed tag '{}' at {:?}", name, begin_at)
+      return Err(ParseError::new(
+        ErrorKind::UnclosedTag(name.to_owned()),
+        begin_at,
+      ));
     }
     // fix last node depth
     let mut last_node = self.nodes.last().unwrap().borrow_mut();
     if last_node.node_type == NodeType::Text {
       last_node.depth = cur_depth;
     }
+    Ok(())
   }
 }
