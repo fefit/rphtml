@@ -1,19 +1,14 @@
-use parser::{Doc, ParserType};
+use parser::Doc;
 use wasm_bindgen::prelude::*;
 pub mod config;
 pub mod parser;
-fn create_instance(xml: bool) -> Doc<'static> {
-  let parser_type = if xml {
-    ParserType::XML
-  } else {
-    ParserType::HTML
-  };
-  Doc::new(parser_type)
+fn create_instance() -> Doc<'static> {
+  Doc::new()
 }
 
 #[wasm_bindgen(catch)]
-pub fn parse(content: &str, xml: bool) -> Result<JsValue, JsValue> {
-  let mut doc = create_instance(xml);
+pub fn parse(content: &str) -> Result<JsValue, JsValue> {
+  let mut doc = create_instance();
   match doc.parse(content) {
     Ok(_) => {}
     Err(e) => {
