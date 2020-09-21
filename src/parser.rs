@@ -1,4 +1,4 @@
-use crate::config;
+use crate::config::RenderOptions;
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::cell::RefCell;
@@ -233,6 +233,7 @@ pub struct Attr {
 }
 
 impl Attr {
+  // build attribute code
   pub fn build(&self, remove_quote: bool) -> String {
     let mut ret = String::with_capacity(20);
     let mut has_key = false;
@@ -348,6 +349,119 @@ impl<'a> Node<'a> {
       depth: 0,
       special: None,
     };
+  }
+  // build node
+  fn build_node(&self, options: &RenderOptions, mut is_in_pre: bool) -> (String, bool) {
+    let mut result = String::from("");
+    use NodeType::*;
+    match self.node_type {
+      Text => {
+        if !is_in_pre && options.minify_spaces {
+          let mut prev_is_space = false;
+          for &c in self.content.as_ref().unwrap().iter() {
+            if c.is_ascii_whitespace() {
+              if prev_is_space {
+                continue;
+              }
+              prev_is_space = true;
+              result.push(c);
+            } else {
+              prev_is_space = false;
+              result.push(c);
+            }
+          }
+        } else {
+          let content = get_content(&self.content);
+          result.push_str(content.as_str());
+        }
+      }
+      Tag => {
+        let meta = self
+          .meta
+          .as_ref()
+          .expect("tag's meta data must have.")
+          .borrow();
+        let tagname = meta.get_name(options.lowercase_tagname);
+        // check if is in pre, only check if not in pre
+        is_in_pre = is_in_pre || {
+          if options.lowercase_tagname {
+            tagname == "pre"
+          } else {
+            tagname.to_lowercase() == "pre"
+          }
+        };
+        let attrs = meta.get_attrs(options.remove_attr_quote);
+        let tag = format!("<{}{}>", tagname, attrs);
+        result.push_str(tag.as_str());
+        // content for some special tags, such as style/script
+        if let Some(_) = &self.content {
+          result.push_str(get_content(&self.content).as_str());
+        }
+      }
+      TagEnd => {
+        let mut content = get_content(&self.content);
+        if options.remove_endtag_space {
+          content = content.trim_end().to_string();
+        }
+        if options.lowercase_tagname {
+          content = content.to_lowercase();
+          if is_in_pre && content == "pre" {
+            is_in_pre = false;
+          }
+        } else {
+          if is_in_pre && content.to_lowercase() == "pre" {
+            is_in_pre = false;
+          }
+        }
+        content = format!("</{}>", content);
+        result.push_str(content.as_str());
+      }
+      HTMLDOCTYPE => {
+        let meta = self
+          .meta
+          .as_ref()
+          .expect("tag's meta data must have.")
+          .borrow();
+        let content = format!("<!DOCTYPE{}>", meta.get_attrs(options.remove_attr_quote));
+        result.push_str(content.as_str());
+      }
+      Comment if !options.remove_comment => {
+        // comment
+        result.push_str(get_content(&self.content).as_str());
+      }
+      _ => {
+        // otherwise, render nothing
+      }
+    }
+    (result, is_in_pre)
+  }
+  // build node tree
+  fn build_tree(&self, options: &RenderOptions, mut is_in_pre: bool) -> (String, bool) {
+    let mut result = String::with_capacity(200);
+    use NodeType::*;
+    if self.node_type != AbstractRoot {
+      let (content, now_in_pre) = self.build_node(options, is_in_pre);
+      result.push_str(content.as_str());
+      is_in_pre = now_in_pre;
+    }
+    if let Some(childs) = &self.childs {
+      for child in childs {
+        let (content, now_in_pre) = child.borrow().build_tree(options, is_in_pre);
+        result.push_str(content.as_str());
+        is_in_pre = now_in_pre;
+      }
+    }
+    if let Some(end_tag) = &self.end_tag {
+      let (content, now_in_pre) = end_tag.borrow().build_node(options, is_in_pre);
+      result.push_str(content.as_str());
+      is_in_pre = now_in_pre
+    }
+    (result, is_in_pre)
+  }
+  // build
+  pub fn build(&self, options: &RenderOptions) -> String {
+    let (content, _) = self.build_tree(options, false);
+    content
   }
 }
 
@@ -1115,84 +1229,18 @@ impl<'a> Doc<'a> {
     Ok(())
   }
   // render
-  pub fn render(&self, options: &config::RenderOptions) -> String {
+  pub fn render(&self, options: &RenderOptions) -> String {
     let mut result = String::with_capacity(self.total_chars);
     let mut is_in_pre = false;
-    use NodeType::*;
     for node in &self.nodes[1..] {
-      let node = node.borrow();
-      match node.node_type {
-        Text => {
-          if !is_in_pre && options.minify_spaces {
-            let mut prev_is_space = false;
-            for &c in node.content.as_ref().unwrap().iter() {
-              if c.is_ascii_whitespace() {
-                if prev_is_space {
-                  continue;
-                }
-                prev_is_space = true;
-                result.push(c);
-              } else {
-                prev_is_space = false;
-                result.push(c);
-              }
-            }
-          } else {
-            let content = get_content(&node.content);
-            result.push_str(content.as_str());
-          }
-        }
-        Tag => {
-          let meta = node
-            .meta
-            .as_ref()
-            .expect("tag's meta data must have.")
-            .borrow();
-          let tagname = meta.get_name(options.lowercase_tagname);
-          // check if is in pre, only check if not in pre
-          is_in_pre = is_in_pre || {
-            if options.lowercase_tagname {
-              tagname == "pre"
-            } else {
-              tagname.to_lowercase() == "pre"
-            }
-          };
-          let attrs = meta.get_attrs(options.remove_attr_quote);
-          let tag = format!("<{}{}>", tagname, attrs);
-          result.push_str(tag.as_str());
-          // content for some special tags, such as style/script
-          if let Some(_) = &node.content {
-            result.push_str(get_content(&node.content).as_str());
-          }
-        }
-        TagEnd => {
-          let mut content = get_content(&node.content);
-          if options.remove_endtag_space {
-            content = content.trim_end().to_string();
-          }
-          if options.lowercase_tagname {
-            content = content.to_lowercase();
-            if is_in_pre && content == "pre" {
-              is_in_pre = false;
-            }
-          } else {
-            if is_in_pre && content.to_lowercase() == "pre" {
-              is_in_pre = false;
-            }
-          }
-          content = format!("</{}>", content);
-          result.push_str(content.as_str());
-        }
-        HTMLDOCTYPE => {}
-        Comment if !options.remove_comment => {
-          // comment
-          result.push_str(get_content(&node.content).as_str());
-        }
-        _ => {
-          // otherwise, render nothing
-        }
-      }
+      let (content, now_in_pre) = node.borrow().build_node(options, is_in_pre);
+      result.push_str(content.as_str());
+      is_in_pre = now_in_pre;
     }
     result
+  }
+  // render tree
+  pub fn render_tree(&self, options: &RenderOptions) -> String {
+    self.root.borrow().build(options)
   }
 }

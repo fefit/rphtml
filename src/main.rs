@@ -20,4 +20,6 @@ fn main() {
   };
   let output = doc.render(&options);
   println!("output is {}", output);
+  let tree_output = doc.render_tree(&options);
+  println!("tree is {}", tree_output);
 }
