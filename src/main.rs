@@ -6,7 +6,9 @@ fn main() {
   let _ = doc.parse(
     r###"<div class="hallo js-remove" id="good">   hahahaa   </div><script>aaaa</script>"###,
   );
-  for node in &doc.nodes {
+  doc.into_json();
+  println!("doc is {:?}", doc.root);
+  /*for node in &doc.nodes {
     let node = node.borrow();
     println!(
       "node_type:{:?}, position:{:?}: content:{:?}",
@@ -20,6 +22,6 @@ fn main() {
   };
   let output = doc.render(&options);
   println!("output is {}", output);
-  let tree_output = doc.render_tree(&options);
-  println!("tree is {}", tree_output);
+  let tree_output = Doc::render_js_tree(doc.root, &options);
+  println!("tree is {}", tree_output);*/
 }

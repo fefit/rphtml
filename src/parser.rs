@@ -1,6 +1,6 @@
 use crate::config::RenderOptions;
 use lazy_static::lazy_static;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
@@ -117,7 +117,7 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
-#[derive(PartialEq, Debug, Serialize)]
+#[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub enum NodeType {
   Comment,      // comment
   HTMLDOCTYPE,  // html doctype
@@ -178,7 +178,7 @@ fn get_content(content: &Option<Vec<char>>) -> String {
 /**
  * the doc's position
 */
-#[derive(Copy, Clone, PartialEq, Serialize)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
@@ -224,7 +224,7 @@ impl CodePosAt {
  * if value is None, it's a boolean attribute
  * if key is None,it's a value with quote
  */
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Attr {
   pub key: Option<String>,
   pub value: Option<String>,
@@ -269,7 +269,7 @@ impl Attr {
  * attrs: the attribute list
  * attr_index: the current attribute index of the 'attrs'
 */
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TagMeta {
   pub tag_in: TagCodeIn,
   pub is_end: bool,
@@ -305,7 +305,7 @@ impl TagMeta {
   }
 }
 
-#[derive(PartialEq, Debug, Serialize)]
+#[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub enum TagCodeIn {
   Wait,
   Key,
@@ -314,11 +314,42 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsNode<'a> {
+  pub tag_index: usize,
+  pub depth: usize,
+  pub node_type: NodeType,
+  pub begin_at: CodePosAt,
+  pub end_at: CodePosAt,
+  pub end_tag: Option<RefCell<JsNode<'a>>>,
+  pub content: Option<Vec<char>>,
+  pub childs: Option<Vec<RefCell<JsNode<'a>>>>,
+  pub meta: Option<RefCell<TagMeta>>,
+  pub special: Option<SpecialTag>,
+}
+
+impl<'a> From<JsNode<'a>> for Node<'a> {
+  fn from(js_node: JsNode<'a>) -> Node<'a> {
+    let end_tag = js_node.end_tag.map(|t| Rc::new(t));
+    let childs = js_node.childs.map(|c| {});
+    let node = Node {
+      tag_index: js_node.tag_index,
+      depth: js_node.depth,
+      node_type: js_node.node_type,
+      begin_at: js_node.begin_at,
+      end_at: js_node.end_at,
+      end_tag,
+      parent: None,
+    };
+    node
+  }
+}
+
 type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  * Node
  */
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Node<'a> {
   pub tag_index: usize,             // if a tag node, add a index to the node
   pub depth: usize,                 // the node's depth in the document
@@ -348,6 +379,7 @@ impl<'a> Node<'a> {
       tag_index: 0,
       depth: 0,
       special: None,
+      childrens: None,
     };
   }
   // build node
@@ -465,7 +497,7 @@ impl<'a> Node<'a> {
   }
 }
 
-#[derive(Debug, Serialize, Hash, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Hash, Clone, Copy)]
 pub enum SpecialTag {
   Pre,
   Void,
@@ -526,13 +558,12 @@ impl<'a> Doc<'a> {
     }
   }
   // for serde, remove cycle reference
-  pub fn to_json(&mut self) {
-    for node in &mut self.nodes {
+  pub fn into_json(&mut self) {
+    for node in &self.nodes {
       let mut node = node.borrow_mut();
       node.parent = None;
     }
   }
-
   // parse with string
   pub fn parse(&mut self, content: &str) -> Result<RefNode<'a>, Box<dyn Error>> {
     for c in content.chars() {
@@ -1242,5 +1273,9 @@ impl<'a> Doc<'a> {
   // render tree
   pub fn render_tree(&self, options: &RenderOptions) -> String {
     self.root.borrow().build(options)
+  }
+  // render for js
+  pub fn render_js_tree(tree: RefNode<'a>, options: &RenderOptions) -> String {
+    tree.borrow().build(options)
   }
 }

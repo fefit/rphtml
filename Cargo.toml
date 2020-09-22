@@ -30,3 +30,6 @@ harness = false
 [[bin]]
 name="rxhtml"
 path="src/main.rs"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

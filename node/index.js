@@ -12,4 +12,12 @@ const htmlStrNodes = rxhtml.parse(`
         </body>
     </html>
 `);
-console.log(htmlStrNodes);
+console.log(JSON.stringify(htmlStrNodes, null, 4));
+const output = rxhtml.render(htmlStrNodes, {
+    minify_spaces: false,
+    lowercase_tagname: false,
+    remove_endtag_space: false,
+    remove_attr_quote: false,
+    remove_comment: false
+});
+console.log(output);
