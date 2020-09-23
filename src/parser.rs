@@ -172,8 +172,10 @@ pub fn is_identity(chars: &Vec<char>) -> bool {
 }
 
 fn get_content(content: &Option<Vec<char>>) -> String {
-  let content = content.as_ref().expect("content must not be empty");
-  content.iter().collect()
+  match content {
+    Some(content) => content.iter().collect::<String>(),
+    _ => String::from(""),
+  }
 }
 
 /**
@@ -315,6 +317,64 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsNode {
+  pub tag_index: usize,
+  pub depth: usize,
+  pub node_type: NodeType,
+  pub begin_at: CodePosAt,
+  pub end_at: CodePosAt,
+  pub end_tag: Option<RefCell<Box<JsNode>>>,
+  pub content: Option<Vec<char>>,
+  pub childs: Option<Vec<RefCell<Box<JsNode>>>>,
+  pub meta: Option<RefCell<TagMeta>>,
+  pub special: Option<SpecialTag>,
+}
+
+impl<'a> From<JsNode> for Node<'a> {
+  fn from(node: JsNode) -> Self {
+    let JsNode {
+      tag_index,
+      depth,
+      node_type,
+      begin_at,
+      end_at,
+      end_tag,
+      content,
+      childs,
+      meta,
+      special,
+    } = node;
+    let end_tag = end_tag.map(|tag| {
+      let tag = tag.into_inner();
+      let last_tag = Node::from(*tag);
+      Rc::new(RefCell::new(last_tag))
+    });
+    let childs: Option<Vec<RefNode<'_>>> = childs.map(|child| {
+      child
+        .into_iter()
+        .map(|tag| {
+          let tag = tag.into_inner();
+          Rc::new(RefCell::new(Node::from(*tag)))
+        })
+        .collect()
+    });
+    Node {
+      tag_index,
+      depth,
+      node_type,
+      begin_at,
+      end_at,
+      content,
+      meta,
+      special,
+      parent: None,
+      end_tag,
+      childs,
+    }
+  }
+}
+
 type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  * Node
@@ -382,21 +442,23 @@ impl<'a> Node<'a> {
           .as_ref()
           .expect("tag's meta data must have.")
           .borrow();
-        let tagname = meta.get_name(options.lowercase_tagname);
+        let tag_name = meta.get_name(options.lowercase_tagname);
         // check if is in pre, only check if not in pre
         is_in_pre = is_in_pre || {
           if options.lowercase_tagname {
-            tagname == "pre"
+            tag_name == "pre"
           } else {
-            tagname.to_lowercase() == "pre"
+            tag_name.to_lowercase() == "pre"
           }
         };
         let attrs = meta.get_attrs(options.remove_attr_quote);
-        let tag = format!("<{}{}>", tagname, attrs);
+        let tag = format!("<{}{}", tag_name, attrs);
         result.push_str(tag.as_str());
         // add self closing
-        if meta.self_closed || (meta.auto_fix && options.always_close_special) {
+        if meta.self_closed || (meta.auto_fix && options.always_close_void) {
           result.push_str(" />");
+        } else {
+          result.push('>');
         }
         // content for some special tags, such as style/script
         if let Some(_) = &self.content {
@@ -481,12 +543,45 @@ pub enum SpecialTag {
 }
 
 impl SpecialTag {
-  pub fn is_ok(&self, code_in: &CodeTypeIn, c: char) -> Result<(), Box<dyn Error>> {
+  pub fn is_ok(
+    &self,
+    code_in: &CodeTypeIn,
+    tag_name: &str,
+    c: char,
+    position: CodePosAt,
+  ) -> Result<(), Box<dyn Error>> {
+    use CodeTypeIn::*;
     use SpecialTag::*;
-    println!("当前code_in:{:?}, 当前character:{:?}", code_in, c);
-    match &self {
-      Pre | EscapeableRawText => {}
+    match code_in {
+      Unkown | UnkownTag | TagEnd | ExclamationBegin | Comment => {
+        return Ok(());
+      }
       _ => {}
+    };
+    match &self {
+      Pre | EscapeableRawText => {
+        let message = format!(
+          "the tag '{}' can only contains text node, wrong '{:?}' at {:?}",
+          tag_name, code_in, position
+        );
+        if code_in != &TextNode {
+          return Err(ParseError::new(ErrorKind::CommonError(message), position));
+        }
+      }
+      Svg | MathML => {
+        match code_in {
+          Tag => {}
+          TextNode if c.is_ascii_whitespace() => {}
+          _ => {
+            let message = format!(
+              "the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
+              tag_name, code_in, position
+            );
+            return Err(ParseError::new(ErrorKind::CommonError(message), position));
+          }
+        };
+      }
+      Template => {}
     };
     Ok(())
   }
@@ -703,6 +798,7 @@ impl<'a> Doc<'a> {
                             self.position,
                           ));
                         }
+                      // void element has pop before.
                       } else {
                         if !self.parse_options.allow_self_closing {
                           // sub element in Svg or MathML allow self-closings
@@ -718,10 +814,9 @@ impl<'a> Doc<'a> {
                               self.position,
                             ));
                           }
-                        } else {
-                          // not void element, but allow self-closing, pop from chain nodes
-                          self.chain_nodes.pop();
                         }
+                        // not void element, but allow self-closing or in <svg/math>, pop from chain nodes
+                        self.chain_nodes.pop();
                       }
                       // set self closing
                       is_self_closing = true;
@@ -974,7 +1069,7 @@ impl<'a> Doc<'a> {
             }
             back_num += 1;
             // void elements
-            if back_num >= max_back_num {
+            if back_num > max_back_num {
               break;
             }
           }
@@ -1274,8 +1369,8 @@ impl<'a> Doc<'a> {
       self.nodes.push(node);
     }
     // check if special, and character is ok
-    if let Some((special, _)) = self.in_special {
-      special.is_ok(&self.code_in, c)?;
+    if let Some((special, tag_name)) = self.in_special {
+      special.is_ok(&self.code_in, tag_name, c, self.position)?;
     }
     // set the previous char
     self.prev_char = c;

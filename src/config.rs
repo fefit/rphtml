@@ -14,5 +14,5 @@ pub struct RenderOptions {
   pub remove_endtag_space: bool,
   pub remove_attr_quote: bool,
   pub remove_comment: bool,
-  pub always_close_special: bool,
+  pub always_close_void: bool,
 }
