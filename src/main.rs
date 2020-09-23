@@ -5,7 +5,7 @@ fn main() {
   let parse_options: ParseOptions = Default::default();
   let mut doc = Doc::new();
   let result = doc.parse(
-    r###"<meta charset="utf-8"><div class="hallo js-remove" id="good">   hahahaa   </div><script>aaaa</script>"###, 
+    r###"<meta charset="utf-8"><div class="hallo js-remove" id="good">   hahahaa   </div><script>aaaa</script><pre> agsdgsdlj sgs</pre>"###, 
     parse_options
   );
   println!("result is {:?}", result);

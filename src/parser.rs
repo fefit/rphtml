@@ -21,8 +21,8 @@ pub struct ParseError {
 }
 
 impl ParseError {
-  pub fn new(kind: ErrorKind, position: CodePosAt) -> Self {
-    ParseError { position, kind }
+  pub fn new(kind: ErrorKind, position: CodePosAt) -> Box<Self> {
+    Box::new(ParseError { position, kind })
   }
 }
 
@@ -128,7 +128,7 @@ pub enum NodeType {
   AbstractRoot, // abstract root node
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum CodeTypeIn {
   AbstractRoot,     // abstract root node,the begin node of document
   Unkown,           // wait for detect node
@@ -481,12 +481,14 @@ pub enum SpecialTag {
 }
 
 impl SpecialTag {
-  pub fn is_ok(&self, code_in: CodeTypeIn) -> Result<bool, &dyn Error> {
+  pub fn is_ok(&self, code_in: &CodeTypeIn, c: char) -> Result<(), Box<dyn Error>> {
+    use SpecialTag::*;
+    println!("当前code_in:{:?}, 当前character:{:?}", code_in, c);
     match &self {
-      Pre => {}
+      Pre | EscapeableRawText => {}
       _ => {}
     };
-    Ok(true)
+    Ok(())
   }
 }
 /**
@@ -596,7 +598,7 @@ impl<'a> Doc<'a> {
   }
 
   // read one char
-  fn next(&mut self, c: char) -> Result<(), ParseError> {
+  fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
     // add all CodeTypeIn enum item to namespace
     use CodeTypeIn::*;
     // check if it's a new node
@@ -1271,6 +1273,10 @@ impl<'a> Doc<'a> {
       // add cur node to parent's child nodes
       self.nodes.push(node);
     }
+    // check if special, and character is ok
+    if let Some((special, _)) = self.in_special {
+      special.is_ok(&self.code_in, c)?;
+    }
     // set the previous char
     self.prev_char = c;
     // add total chars
@@ -1280,7 +1286,7 @@ impl<'a> Doc<'a> {
     Ok(())
   }
   // end of the doc
-  fn eof(&mut self) -> Result<(), ParseError> {
+  fn eof(&mut self) -> Result<(), Box<dyn Error>> {
     let cur_depth = self.chain_nodes.len();
     // check if tags are all closed correctly.
     if cur_depth > 1 {
