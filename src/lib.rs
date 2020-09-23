@@ -1,4 +1,4 @@
-use config::RenderOptions;
+use config::{ParseOptions, RenderOptions};
 use parser::{Doc, Node};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,9 +10,13 @@ fn create_instance() -> Doc<'static> {
 }
 
 #[wasm_bindgen(catch)]
-pub fn parse(content: &str) -> Result<JsValue, JsValue> {
+pub fn parse(content: &str, options: JsValue) -> Result<JsValue, JsValue> {
   let mut doc = create_instance();
-  match doc.parse(content) {
+  let options: ParseOptions = match options.into_serde() {
+    Err(e) => return Err(JsValue::from_str(&e.to_string())),
+    Ok(options) => options,
+  };
+  match doc.parse(content, options) {
     Ok(_) => {}
     Err(e) => {
       return Err(JsValue::from_str(&e.to_string()));

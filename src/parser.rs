@@ -1,4 +1,4 @@
-use crate::config::RenderOptions;
+use crate::config::{ParseOptions, RenderOptions};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -52,6 +52,8 @@ impl fmt::Display for ParseError {
         c, tag, position
       ),
       UnexpectedCharacter(c) => format!("unexpected character '{}' at {:?}", c, position),
+      WrongCaseSensitive(tag) => format!("case-sensitive tag '{}' at {:?}", tag, position),
+      WrongSelfClosing(tag) => format!("wrong self-closing tag '{}' at {:?}, if you want across this validation, use 'allow-self-closing' option", tag, position),
       CommonError(msg) => msg.to_string(),
     };
     f.write_str(output.as_str())
@@ -74,6 +76,8 @@ pub enum ErrorKind {
   UnrecognizedTag(String, String),
   WrongTagIdentity(String),
   WrongRootTextNode(String),
+  WrongCaseSensitive(String),
+  WrongSelfClosing(String),
   CommonError(String),
 }
 
@@ -104,9 +108,6 @@ lazy_static! {
   static ref SPECIAL_TAG_MAP: HashMap<&'static str, SpecialTag> = {
     use SpecialTag::*;
     let mut map = HashMap::new();
-    for &tag in (&VOID_ELEMENTS).iter() {
-      map.insert(tag, Void);
-    }
     map.insert("pre", Pre);
     map.insert("textarea", EscapeableRawText);
     map.insert("title", EscapeableRawText);
@@ -128,7 +129,7 @@ pub enum NodeType {
 }
 
 #[derive(PartialEq)]
-enum CodeTypeIn {
+pub enum CodeTypeIn {
   AbstractRoot,     // abstract root node,the begin node of document
   Unkown,           // wait for detect node
   UnkownTag,        // is a tag begin with '<', but need more diagnosis
@@ -314,37 +315,6 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsNode<'a> {
-  pub tag_index: usize,
-  pub depth: usize,
-  pub node_type: NodeType,
-  pub begin_at: CodePosAt,
-  pub end_at: CodePosAt,
-  pub end_tag: Option<RefCell<JsNode<'a>>>,
-  pub content: Option<Vec<char>>,
-  pub childs: Option<Vec<RefCell<JsNode<'a>>>>,
-  pub meta: Option<RefCell<TagMeta>>,
-  pub special: Option<SpecialTag>,
-}
-
-impl<'a> From<JsNode<'a>> for Node<'a> {
-  fn from(js_node: JsNode<'a>) -> Node<'a> {
-    let end_tag = js_node.end_tag.map(|t| Rc::new(t));
-    let childs = js_node.childs.map(|c| {});
-    let node = Node {
-      tag_index: js_node.tag_index,
-      depth: js_node.depth,
-      node_type: js_node.node_type,
-      begin_at: js_node.begin_at,
-      end_at: js_node.end_at,
-      end_tag,
-      parent: None,
-    };
-    node
-  }
-}
-
 type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  * Node
@@ -379,7 +349,6 @@ impl<'a> Node<'a> {
       tag_index: 0,
       depth: 0,
       special: None,
-      childrens: None,
     };
   }
   // build node
@@ -425,6 +394,10 @@ impl<'a> Node<'a> {
         let attrs = meta.get_attrs(options.remove_attr_quote);
         let tag = format!("<{}{}>", tagname, attrs);
         result.push_str(tag.as_str());
+        // add self closing
+        if meta.self_closed || (meta.auto_fix && options.always_close_special) {
+          result.push_str(" />");
+        }
         // content for some special tags, such as style/script
         if let Some(_) = &self.content {
           result.push_str(get_content(&self.content).as_str());
@@ -459,7 +432,8 @@ impl<'a> Node<'a> {
       }
       Comment if !options.remove_comment => {
         // comment
-        result.push_str(get_content(&self.content).as_str());
+        let comment = format!("<!--{}-->", get_content(&self.content));
+        result.push_str(comment.as_str());
       }
       _ => {
         // otherwise, render nothing
@@ -497,17 +471,27 @@ impl<'a> Node<'a> {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize, Hash, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Hash, Clone, Copy, PartialEq)]
 pub enum SpecialTag {
   Pre,
-  Void,
   EscapeableRawText,
   MathML,
   Svg,
   Template,
 }
+
+impl SpecialTag {
+  pub fn is_ok(&self, code_in: CodeTypeIn) -> Result<bool, &dyn Error> {
+    match &self {
+      Pre => {}
+      _ => {}
+    };
+    Ok(true)
+  }
+}
 /**
  * Doc
+ * https://www.w3.org/TR/2011/WD-html-markup-20110113/syntax.html
 */
 pub struct Doc<'a> {
   code_in: CodeTypeIn,
@@ -522,6 +506,7 @@ pub struct Doc<'a> {
   tag_index: usize,
   in_special: Option<(SpecialTag, &'static str)>,
   total_chars: usize,
+  pub parse_options: ParseOptions,
   pub nodes: Vec<RefNode<'a>>,
   pub root: RefNode<'a>,
 }
@@ -555,6 +540,7 @@ impl<'a> Doc<'a> {
       detect: None,
       in_special: None,
       root,
+      parse_options: Default::default(),
     }
   }
   // for serde, remove cycle reference
@@ -565,7 +551,12 @@ impl<'a> Doc<'a> {
     }
   }
   // parse with string
-  pub fn parse(&mut self, content: &str) -> Result<RefNode<'a>, Box<dyn Error>> {
+  pub fn parse(
+    &mut self,
+    content: &str,
+    options: ParseOptions,
+  ) -> Result<RefNode<'a>, Box<dyn Error>> {
+    self.parse_options = options;
     for c in content.chars() {
       self.next(c)?;
     }
@@ -574,7 +565,11 @@ impl<'a> Doc<'a> {
   }
 
   // parse file
-  pub fn parse_file<P>(&mut self, filename: P) -> Result<RefNode<'a>, Box<dyn Error>>
+  pub fn parse_file<P>(
+    &mut self,
+    filename: P,
+    options: ParseOptions,
+  ) -> Result<RefNode<'a>, Box<dyn Error>>
   where
     P: AsRef<Path>,
   {
@@ -586,6 +581,7 @@ impl<'a> Doc<'a> {
     };
     let file = File::open(file_path)?;
     let file = BufReader::new(file);
+    self.parse_options = options;
     for line in file.lines() {
       for c in line.unwrap().chars() {
         self.next(c)?;
@@ -659,6 +655,7 @@ impl<'a> Doc<'a> {
           c == TAG_END_CHAR
         };
         let is_in_tag = self.code_in == Tag;
+        let mut is_self_closing = false;
         let mut current_node = self.current_node.borrow_mut();
         let mut tag_name: String = String::from("");
         match current_node.meta.as_mut() {
@@ -685,12 +682,48 @@ impl<'a> Doc<'a> {
                   }
                 } else if is_end {
                   meta.is_end = true;
+                  // void elements
+                  let is_void_element = VOID_ELEMENTS.contains(&meta.name.to_lowercase().as_str());
+                  if is_void_element {
+                    // pop void element meet tag end '>'
+                    self.chain_nodes.pop();
+                  }
                   // self-closing tags
                   if tag_in_wait {
                     if self.prev_char == '/' {
+                      if is_void_element {
+                        // void element allow self closing
+                        if self.parse_options.case_sensitive_tagname
+                          && meta.name.to_lowercase() != meta.name
+                        {
+                          return Err(ParseError::new(
+                            ErrorKind::WrongCaseSensitive(meta.name.clone()),
+                            self.position,
+                          ));
+                        }
+                      } else {
+                        if !self.parse_options.allow_self_closing {
+                          // sub element in Svg or MathML allow self-closings
+                          let is_in_xml_or_mathml = match self.in_special {
+                            Some((special, _)) => {
+                              special == SpecialTag::Svg || special == SpecialTag::MathML
+                            }
+                            None => false,
+                          };
+                          if !is_in_xml_or_mathml {
+                            return Err(ParseError::new(
+                              ErrorKind::WrongCaseSensitive(meta.name.clone()),
+                              self.position,
+                            ));
+                          }
+                        } else {
+                          // not void element, but allow self-closing, pop from chain nodes
+                          self.chain_nodes.pop();
+                        }
+                      }
+                      // set self closing
+                      is_self_closing = true;
                       meta.self_closed = true;
-                      // remove from the chain nodes
-                      self.chain_nodes.pop();
                     }
                   } else {
                     is_end_key_or_value = true;
@@ -884,7 +917,7 @@ impl<'a> Doc<'a> {
                 };
               }
               name @ _ => {
-                if !self.in_special.is_some() {
+                if self.in_special.is_none() && !is_self_closing {
                   self.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(name) {
                     Some((special, Box::leak(tag_name.into_boxed_str())))
                   } else {
@@ -908,14 +941,25 @@ impl<'a> Doc<'a> {
           let mut is_tag_ended = false;
           let mut iter = self.chain_nodes.iter().rev();
           let mut back_num: usize = 0;
-          let max_back_num: usize = self.chain_nodes.len();
+          let max_back_num: usize = if self.parse_options.allow_fix_unclose {
+            self.chain_nodes.len()
+          } else {
+            0
+          };
           let is_allow_fix = max_back_num > 0;
           let mut empty_closed_tags: Vec<RefNode<'a>> = vec![];
           let mut real_tag_node: Option<RefNode<'a>> = None;
           while let Some(node) = iter.next() {
             if let Some(meta) = &node.borrow().meta {
               let tag_name = &meta.borrow().name;
-              if tag_name == &end_tag_name || (tag_name.to_lowercase() == fix_end_tag_name) {
+              let is_equal = tag_name == &end_tag_name;
+              if is_equal || (tag_name.to_lowercase() == fix_end_tag_name) {
+                if self.parse_options.case_sensitive_tagname && !is_equal {
+                  return Err(ParseError::new(
+                    ErrorKind::WrongCaseSensitive(tag_name.clone()),
+                    self.position,
+                  ));
+                }
                 is_tag_ended = true;
                 real_tag_node = Some(Rc::clone(node));
                 // todo: set the end tag
@@ -928,7 +972,7 @@ impl<'a> Doc<'a> {
             }
             back_num += 1;
             // void elements
-            if back_num > max_back_num {
+            if back_num >= max_back_num {
               break;
             }
           }
@@ -1055,10 +1099,12 @@ impl<'a> Doc<'a> {
         if c == '>' && self.prev_char == END_SYMBOL {
           let total_len = self.prev_chars.len();
           if total_len >= 2 {
-            let prev_last_char = self.prev_chars[total_len - 2];
+            let last_index = total_len - 2;
+            let prev_last_char = self.prev_chars[last_index];
             if prev_last_char == END_SYMBOL {
               is_end = true;
-              self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+              self.current_node.borrow_mut().content =
+                Some(self.prev_chars[2..last_index].to_vec());
               is_node_end = true;
               self.code_in = Unkown;
             }
@@ -1073,13 +1119,6 @@ impl<'a> Doc<'a> {
         // check the tag type
         match c {
           'a'..='z' | 'A'..='Z' => {
-            // special tags not allowd child tags
-            if self.in_special.is_some() {
-              return Err(ParseError::new(
-                ErrorKind::ChildInSpecialTag(self.in_special.unwrap().1.to_string(), c),
-                begin_at,
-              ));
-            }
             // new tag node, add tag_index
             let mut inner_node = Node::new(NodeType::Tag, begin_at);
             inner_node.tag_index = self.tag_index + 1;
@@ -1090,7 +1129,7 @@ impl<'a> Doc<'a> {
             self.prev_chars.push(c);
           }
           '/' => {
-            // new tag end
+            // tag end
             new_node = Some(Rc::new(RefCell::new(Node::new(NodeType::TagEnd, begin_at))));
             is_indepent_node = false;
             self.code_in = TagEnd;
@@ -1236,6 +1275,7 @@ impl<'a> Doc<'a> {
     self.prev_char = c;
     // add total chars
     self.total_chars += 1;
+    // check special
     // parse ok
     Ok(())
   }
