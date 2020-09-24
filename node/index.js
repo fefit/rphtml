@@ -6,23 +6,13 @@ const htmlStrNodes = rxhtml.parse(`
             <title>测试页面</title>
         </head>
         <body>
+            <!--注释-->
             <div class="header">
                 测试header
-            </div>
+            </DIV   >
         </body>
     </html>
-`, {
-    case_sensitive_tagname: false,
-    allow_self_closing: false,
-    allow_fix_unclose: false
-});
+`);
 console.log(JSON.stringify(htmlStrNodes, null, 4));
-const output = rxhtml.render(htmlStrNodes, {
-    minify_spaces: false,
-    lowercase_tagname: false,
-    remove_endtag_space: false,
-    remove_attr_quote: false,
-    remove_comment: false,
-    always_close_void: false
-});
+const output = rxhtml.render(htmlStrNodes, rxhtml.JsRenderOptions.default());
 console.log(output);

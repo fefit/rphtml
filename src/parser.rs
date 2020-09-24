@@ -11,6 +11,7 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::Path;
 use std::rc::{Rc, Weak};
+use wasm_bindgen::prelude::*;
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
 
@@ -118,17 +119,18 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
-#[derive(PartialEq, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum NodeType {
-  Comment,      // comment
-  HTMLDOCTYPE,  // html doctype
-  Tag,          // the start tag\self-closing tag\autofix empty tag
-  TagEnd,       // the end tag node
-  Text,         // text node
-  AbstractRoot, // abstract root node
+  Comment,          // comment
+  HTMLDOCTYPE,      // html doctype
+  Tag,              // the start tag\self-closing tag\autofix empty tag
+  TagEnd,           // the end tag node
+  Text,             // text node
+  SpacesBetweenTag, // spaces between tag
+  AbstractRoot,     // abstract root node
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum CodeTypeIn {
   AbstractRoot,     // abstract root node,the begin node of document
   Unkown,           // wait for detect node
@@ -181,7 +183,8 @@ fn get_content(content: &Option<Vec<char>>) -> String {
 /**
  * the doc's position
 */
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
@@ -379,6 +382,7 @@ type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  * Node
  */
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Node<'a> {
   pub tag_index: usize,             // if a tag node, add a index to the node
@@ -416,19 +420,23 @@ impl<'a> Node<'a> {
     let mut result = String::from("");
     use NodeType::*;
     match self.node_type {
-      Text => {
+      Text | SpacesBetweenTag => {
         if !is_in_pre && options.minify_spaces {
-          let mut prev_is_space = false;
-          for &c in self.content.as_ref().unwrap().iter() {
-            if c.is_ascii_whitespace() {
-              if prev_is_space {
-                continue;
+          if self.node_type == SpacesBetweenTag {
+            // spaces between tag,just remove it
+          } else {
+            let mut prev_is_space = false;
+            for &c in self.content.as_ref().unwrap().iter() {
+              if c.is_ascii_whitespace() {
+                if prev_is_space {
+                  continue;
+                }
+                prev_is_space = true;
+                result.push(' ');
+              } else {
+                prev_is_space = false;
+                result.push(c);
               }
-              prev_is_space = true;
-              result.push(c);
-            } else {
-              prev_is_space = false;
-              result.push(c);
             }
           }
         } else {
@@ -594,7 +602,6 @@ pub struct Doc<'a> {
   code_in: CodeTypeIn,
   position: CodePosAt,
   mem_position: CodePosAt,
-  mem_code_in: CodeTypeIn,
   detect: Option<DetectChar>,
   prev_chars: Vec<char>,
   prev_char: char,
@@ -603,6 +610,8 @@ pub struct Doc<'a> {
   tag_index: usize,
   in_special: Option<(SpecialTag, &'static str)>,
   total_chars: usize,
+  repeat_whitespace: bool,
+  check_textnode: Option<RefNode<'a>>,
   pub parse_options: ParseOptions,
   pub nodes: Vec<RefNode<'a>>,
   pub root: RefNode<'a>,
@@ -626,7 +635,6 @@ impl<'a> Doc<'a> {
       code_in: CodeTypeIn::AbstractRoot,
       position: CodePosAt::begin(),
       mem_position: CodePosAt::begin(),
-      mem_code_in: CodeTypeIn::AbstractRoot,
       prev_char: ' ',
       prev_chars: Vec::with_capacity(200),
       nodes,
@@ -638,6 +646,8 @@ impl<'a> Doc<'a> {
       in_special: None,
       root,
       parse_options: Default::default(),
+      repeat_whitespace: false,
+      check_textnode: None,
     }
   }
   // for serde, remove cycle reference
@@ -706,16 +716,24 @@ impl<'a> Doc<'a> {
     let mut is_text_node_end = false;
     // match all posible nodes
     let cur_depth = self.chain_nodes.len();
-    // check if indepent node, a end tag is not indepent
-    let mut is_indepent_node = true;
+    // check if indepent node, an end tag is not indepent
+    let mut is_end_tag = false;
+    // check if a text node is only child of tag
+    let mut is_only_text_child = false;
+    // tag ended
+    let mut is_tag_ended = false;
     match self.code_in {
       TextNode | Unkown | AbstractRoot => {
         match c {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
             if self.code_in == TextNode {
-              self.mem_code_in = TextNode;
               self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+              self.check_textnode = if self.repeat_whitespace {
+                Some(Rc::clone(&self.current_node))
+              } else {
+                None
+              };
               is_node_end = true;
               is_text_node_end = true;
             }
@@ -739,6 +757,9 @@ impl<'a> Doc<'a> {
               ))));
               self.code_in = TextNode;
               self.prev_chars.clear();
+              self.repeat_whitespace = c.is_ascii_whitespace();
+            } else {
+              self.repeat_whitespace = self.repeat_whitespace && c.is_ascii_whitespace();
             }
             self.prev_chars.push(c);
           }
@@ -1035,7 +1056,6 @@ impl<'a> Doc<'a> {
         if c == TAG_END_CHAR {
           let end_tag_name = self.chars_to_string();
           let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
-          let mut is_tag_ended = false;
           let mut iter = self.chain_nodes.iter().rev();
           let mut back_num: usize = 0;
           let max_back_num: usize = if self.parse_options.allow_fix_unclose {
@@ -1073,47 +1093,50 @@ impl<'a> Doc<'a> {
               break;
             }
           }
-          if is_tag_ended {
+          // find the nearest tag
+          if let Some(tag) = &real_tag_node {
+            // set end tag for the tag node
+            tag.borrow_mut().end_tag = Some(Rc::clone(&self.current_node));
+            is_only_text_child = match &tag.borrow().childs {
+              Some(childs) => childs.len() == 1 && childs[0].borrow().node_type == NodeType::Text,
+              None => false,
+            };
+            let mut current_node = self.current_node.borrow_mut();
+            current_node.parent = Some(Rc::downgrade(&tag));
+            current_node.depth = tag.borrow().depth;
+            current_node.content = Some(end_tag_name.chars().collect());
+            // change the empty tags
+            if empty_closed_tags.len() > 0 {
+              for tag_node in empty_closed_tags.iter_mut() {
+                let mut tag_node = tag_node.borrow_mut();
+                // change the parent node
+                tag_node.parent = Some(Rc::downgrade(tag));
+                // set it's meta as auto fix
+                if let Some(meta) = &tag_node.meta {
+                  let mut meta = meta.borrow_mut();
+                  meta.auto_fix = true;
+                }
+                // change all childs's parent and clear
+                if let Some(childs) = &tag_node.childs {
+                  if childs.len() > 0 {
+                    for child_node in childs.iter() {
+                      let mut child_node = child_node.borrow_mut();
+                      child_node.parent = Some(Rc::downgrade(tag));
+                      child_node.depth -= back_num;
+                    }
+                  }
+                }
+                // clear childs
+                tag_node.childs = None;
+              }
+            }
+            // set node end
             is_node_end = true;
-            self.code_in = Unkown;
             // end of special tag
             if self.in_special.is_some() && self.in_special.unwrap().1 == fix_end_tag_name {
               self.in_special = None;
             }
-            // find the nearest tag,
-            if let Some(tag) = &real_tag_node {
-              // set end tag for the tag node
-              tag.borrow_mut().end_tag = Some(Rc::clone(&self.current_node));
-              let mut current_node = self.current_node.borrow_mut();
-              current_node.parent = Some(Rc::downgrade(&tag));
-              current_node.depth = tag.borrow().depth;
-              current_node.content = Some(end_tag_name.chars().collect());
-              // change the empty tags
-              if empty_closed_tags.len() > 0 {
-                for tag_node in empty_closed_tags.iter_mut() {
-                  let mut tag_node = tag_node.borrow_mut();
-                  // change the parent node
-                  tag_node.parent = Some(Rc::downgrade(tag));
-                  // set it's meta as auto fix
-                  if let Some(meta) = &tag_node.meta {
-                    let mut meta = meta.borrow_mut();
-                    meta.auto_fix = true;
-                  }
-                  // change all childs's parent and clear
-                  if let Some(childs) = &tag_node.childs {
-                    if childs.len() > 0 {
-                      for child_node in childs.iter() {
-                        let mut child_node = child_node.borrow_mut();
-                        child_node.parent = Some(Rc::downgrade(tag));
-                        child_node.depth -= back_num;
-                      }
-                    }
-                  }
-                  // clear childs
-                  tag_node.childs = None;
-                }
-              }
-            }
+            self.code_in = Unkown;
             // remove the matched tag from the chain nodes
             self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
@@ -1228,7 +1251,7 @@ impl<'a> Doc<'a> {
           '/' => {
             // tag end
             new_node = Some(Rc::new(RefCell::new(Node::new(NodeType::TagEnd, begin_at))));
-            is_indepent_node = false;
+            is_end_tag = true;
             self.code_in = TagEnd;
           }
           '!' => {
@@ -1313,7 +1336,7 @@ impl<'a> Doc<'a> {
       } else {
         self.position.next_col()
       };
-      if is_indepent_node {
+      if !is_end_tag {
         current_node.depth = cur_depth;
       }
     }
@@ -1339,9 +1362,20 @@ impl<'a> Doc<'a> {
         self.position.move_one();
       }
     }
+    // check if previous is spaces text node
+    if (new_node.is_some() && !is_end_tag) || is_tag_ended {
+      if let Some(text_node) = &mut self.check_textnode {
+        if is_tag_ended && is_only_text_child {
+          // do nothing with empty text node
+        } else {
+          text_node.borrow_mut().node_type = NodeType::SpacesBetweenTag;
+        }
+        self.check_textnode = None;
+      }
+    }
     // has a new node
     if let Some(node) = new_node {
-      if is_indepent_node {
+      if !is_end_tag {
         // set parent node
         let parent_node = self.chain_nodes.last().unwrap();
         node.borrow_mut().parent = Some(Rc::downgrade(parent_node));
@@ -1383,7 +1417,7 @@ impl<'a> Doc<'a> {
   // end of the doc
   fn eof(&mut self) -> Result<(), Box<dyn Error>> {
     let cur_depth = self.chain_nodes.len();
-    // check if tags are all closed correctly.
+    // check if all tags are closed correctly.
     if cur_depth > 1 {
       let last_node = self.chain_nodes[cur_depth - 1].borrow();
       let begin_at = last_node.begin_at;
@@ -1393,10 +1427,20 @@ impl<'a> Doc<'a> {
         begin_at,
       ));
     }
-    // fix last node depth
-    let mut last_node = self.nodes.last().unwrap().borrow_mut();
-    if last_node.node_type == NodeType::Text {
+    // check and fix last node info.
+    use CodeTypeIn::*;
+    if self.code_in == TextNode {
+      let mut last_node = self.current_node.borrow_mut();
       last_node.depth = cur_depth;
+      last_node.content = Some(self.prev_chars.clone());
+      if self.repeat_whitespace {
+        last_node.node_type = NodeType::SpacesBetweenTag;
+      }
+    } else if self.code_in != Unkown {
+      return Err(ParseError::new(
+        ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
+        self.current_node.borrow().begin_at,
+      ));
     }
     Ok(())
   }
@@ -1416,7 +1460,7 @@ impl<'a> Doc<'a> {
     self.root.borrow().build(options)
   }
   // render for js
-  pub fn render_js_tree(tree: RefNode<'a>, options: &RenderOptions) -> String {
+  pub fn render_js_tree(tree: RefNode<'_>, options: &RenderOptions) -> String {
     tree.borrow().build(options)
   }
 }

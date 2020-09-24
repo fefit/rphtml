@@ -4,7 +4,7 @@ version = "0.0.1"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
-description = "a html/xml parser"
+description = "a html parser write in rust."
 repository = "https://github.com/fefit/rxhtml"
 
 [dependencies]
@@ -12,7 +12,7 @@ lazy_static = "1.4.0"
 wasm-bindgen = { version="0.2.68", features = ["serde-serialize"] }
 serde = { version = "1.0.116", features = ["derive", "rc"] }
 serde_json = "1.0.57"
-
+console_error_panic_hook = "0.1.6"
 
 [lib]
 name = "rxhtml"

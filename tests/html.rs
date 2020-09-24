@@ -4,13 +4,13 @@ use rxhtml::parser::*;
 #[should_panic]
 fn test_doctype() {
   let mut doc = Doc::new();
-  doc.parse("<!doctype>");
+  doc.parse("<!doctype>", Default::default());
 }
 
 #[test]
 fn test_in_special() {
   let mut doc = Doc::new();
-  let _ = doc.parse("<pre>text in prev</pre><div></div>");
+  let _ = doc.parse("<pre>text in prev</pre><div></div>", Default::default());
   assert_eq!(doc.nodes.len(), 6);
   assert!(doc.nodes[2].borrow().special.is_some());
   let text_in_pre = if let Some(special) = doc.nodes[2].borrow().special {
