@@ -119,6 +119,7 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
+#[wasm_bindgen]
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum NodeType {
   Comment,          // comment
@@ -230,6 +231,16 @@ impl CodePosAt {
  * if value is None, it's a boolean attribute
  * if key is None,it's a value with quote
  */
+#[wasm_bindgen(typescript_custom_section)]
+const IJS_NODE_ATTR: &'static str = r#"
+export interface IJsNodeAttr {
+  key?: string;
+  value?: string;
+  quote?: string;
+  need_quote: bool; 
+}
+"#;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Attr {
   pub key: Option<String>,
@@ -275,18 +286,29 @@ impl Attr {
  * attrs: the attribute list
  * attr_index: the current attribute index of the 'attrs'
 */
+
+#[wasm_bindgen(typescript_custom_section)]
+const IJS_NODE_TAGMETA: &'static str = r#"
+export interface IJsNodeTagMeta {
+  self_closed: bool;
+  auto_fix: bool;
+  name: string;
+  attrs: IJsNodeAttr; 
+}
+"#;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TagMeta {
-  pub tag_in: TagCodeIn,
-  pub is_end: bool,
+  attr_index: i32,
+  prev_is_key: bool,
+  is_in_kv: bool,
+  is_in_translate: bool,
+  tag_in: TagCodeIn,
+  is_end: bool,
   pub self_closed: bool,
   pub auto_fix: bool,
   pub name: String,
   pub attrs: Vec<Attr>,
-  pub attr_index: i32,
-  pub prev_is_key: bool,
-  pub is_in_kv: bool,
-  pub is_in_translate: bool,
 }
 
 impl TagMeta {
@@ -320,6 +342,26 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const IJS_NODE: &'static str = r#"
+export interface IJsNode {
+  tag_index: number;
+  depth: number;
+  node_type: NodeType;
+  begin_at: CodePosAt;
+  end_tag?: IJsNode;
+  content?: Array<string>; 
+  childs?: Array<IJsNode>;
+  meta?: IJsNodeTagMeta; 
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+  #[wasm_bindgen(typescript_type = "IJsNode")]
+  pub type IJsNode;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsNode {
   pub tag_index: usize,
@@ -332,6 +374,15 @@ pub struct JsNode {
   pub childs: Option<Vec<RefCell<Box<JsNode>>>>,
   pub meta: Option<RefCell<TagMeta>>,
   pub special: Option<SpecialTag>,
+}
+
+impl From<IJsNode> for JsNode {
+  fn from(node: IJsNode) -> Self {
+    match JsValue::into_serde(&node) {
+      Ok(result) => result,
+      Err(e) => panic!(e),
+    }
+  }
 }
 
 impl<'a> From<JsNode> for Node<'a> {

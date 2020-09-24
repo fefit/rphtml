@@ -12,7 +12,11 @@ const htmlStrNodes = rxhtml.parse(`
             </DIV   >
         </body>
     </html>
-`);
+`,{
+    allow_self_closing: true
+});
 console.log(JSON.stringify(htmlStrNodes, null, 4));
-const output = rxhtml.render(htmlStrNodes, rxhtml.JsRenderOptions.default());
+const output = rxhtml.render(htmlStrNodes, {
+    minify_spaces: true
+});
 console.log(output);

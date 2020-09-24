@@ -7,7 +7,7 @@ fn optional_bool(value: Option<bool>) -> bool {
 
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_PARSE_OPTIONS: &'static str = r#"
-interface IJsParseOptions {
+export interface IJsParseOptions {
   allow_fix_unclose?: boolean;
   allow_self_closing?: boolean;
   case_sensitive_tagname?: boolean;
@@ -16,7 +16,7 @@ interface IJsParseOptions {
 
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_RENDER_OPTIONS: &'static str = r#"
-interface IJsRenderOptions {
+export interface IJsRenderOptions {
   always_close_void?: boolean;
   lowercase_tagname?: boolean;
   minify_spaces?: boolean;
@@ -41,7 +41,6 @@ pub struct ParseOptions {
   pub allow_fix_unclose: bool,      // allow auto fix unclosed tag
 }
 
-#[wasm_bindgen]
 #[derive(Default, Deserialize, Serialize)]
 pub struct JsParseOptions {
   pub case_sensitive_tagname: Option<bool>,
@@ -51,11 +50,10 @@ pub struct JsParseOptions {
 
 impl From<IJsParseOptions> for JsParseOptions {
   fn from(options: IJsParseOptions) -> Self {
-    let options: JsParseOptions = match JsValue::into_serde(&options) {
+    match JsValue::into_serde(&options) {
       Ok(result) => result,
       Err(_) => Default::default(),
-    };
-    options
+    }
   }
 }
 
@@ -79,7 +77,6 @@ pub struct RenderOptions {
   pub always_close_void: bool,
 }
 
-#[wasm_bindgen]
 #[derive(Default, Deserialize, Serialize)]
 pub struct JsRenderOptions {
   pub minify_spaces: Option<bool>,
@@ -88,6 +85,15 @@ pub struct JsRenderOptions {
   pub remove_attr_quote: Option<bool>,
   pub remove_comment: Option<bool>,
   pub always_close_void: Option<bool>,
+}
+
+impl From<IJsRenderOptions> for JsRenderOptions {
+  fn from(options: IJsRenderOptions) -> Self {
+    match JsValue::into_serde(&options) {
+      Ok(result) => result,
+      Err(_) => Default::default(),
+    }
+  }
 }
 
 impl From<JsRenderOptions> for RenderOptions {
