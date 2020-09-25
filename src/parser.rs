@@ -86,9 +86,6 @@ pub enum ErrorKind {
 pub enum DetectChar {
   Comment,
   DOCTYPE,
-  CDATA,
-  Script,
-  Style,
 }
 
 lazy_static! {
@@ -97,9 +94,6 @@ lazy_static! {
     let mut map = HashMap::new();
     map.insert(Comment, vec!['-', '-']);
     map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
-    map.insert(CDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
-    map.insert(Script, vec!['<', '/', 's', 'c', 'r', 'i', 'p', 't']);
-    map.insert(Style, vec!['<', '/', 's', 't', 'y', 'l', 'e']);
     map
   };
   static ref VOID_ELEMENTS: Vec<&'static str> = vec![
@@ -333,7 +327,7 @@ impl TagMeta {
   }
 }
 
-#[derive(PartialEq, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum TagCodeIn {
   Wait,
   Key,
@@ -653,7 +647,7 @@ pub struct Doc<'a> {
   code_in: CodeTypeIn,
   position: CodePosAt,
   mem_position: CodePosAt,
-  detect: Option<DetectChar>,
+  detect: Option<Vec<char>>,
   prev_chars: Vec<char>,
   prev_char: char,
   chain_nodes: Vec<RefNode<'a>>,
@@ -915,10 +909,11 @@ impl<'a> Doc<'a> {
                           ));
                         }
                         meta.attr_index += 1;
+                        meta.attrs.push(Default::default());
                       } else {
                         meta.is_in_kv = false;
                       }
-                      // reset prev
+                      // reset previous state
                       meta.prev_is_key = false;
                       self.prev_chars.clear();
                       meta.tag_in = if c == '"' {
@@ -981,6 +976,7 @@ impl<'a> Doc<'a> {
                   } else {
                     cur_attr.value = Some(value);
                   };
+                  meta.tag_in = Wait;
                   self.prev_chars.clear();
                 }
               }
@@ -995,9 +991,6 @@ impl<'a> Doc<'a> {
                     || (meta.tag_in == SingleQuotedValue && c == '\'')
                   {
                     meta.tag_in = Wait;
-                    if meta.attrs.len() <= attr_index {
-                      meta.attrs.push(Default::default());
-                    }
                     let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
                     cur_attr.quote = Some(c);
                     cur_attr.value = Some(self.chars_to_string());
@@ -1084,6 +1077,10 @@ impl<'a> Doc<'a> {
                 } else {
                   HTMLStyle
                 };
+                let mut next_chars = vec!['<', '/'];
+                let tag_chars: Vec<_> = tag_name.chars().collect();
+                next_chars.extend(tag_chars);
+                self.detect = Some(next_chars);
               }
               name @ _ => {
                 if self.in_special.is_none() && !is_self_closing {
@@ -1201,12 +1198,10 @@ impl<'a> Doc<'a> {
         }
       }
       HTMLScript | HTMLStyle => {
-        let detect_type = if self.code_in == HTMLScript {
-          DetectChar::Script
-        } else {
-          DetectChar::Style
-        };
-        let end_tag = DETECT_CHAR_MAP.get(&detect_type).unwrap();
+        let end_tag = self
+          .detect
+          .as_ref()
+          .expect("detect must set before set code_in.");
         let total_len = end_tag.len();
         let mut chars_len = self.prev_chars.len();
         // parse html script tag and style tag
@@ -1227,7 +1222,10 @@ impl<'a> Doc<'a> {
                   break;
                 }
               } else {
-                if prev_char != end_tag[total_len - matched_num - 1] {
+                let target_char = end_tag[total_len - matched_num - 1];
+                if (self.parse_options.case_sensitive_tagname && prev_char != target_char)
+                  || prev_char.to_ascii_lowercase() != target_char.to_ascii_lowercase()
+                {
                   break;
                 }
                 matched_num += 1;
@@ -1321,8 +1319,7 @@ impl<'a> Doc<'a> {
       ExclamationBegin => {
         // maybe Comment | DOCTYPE<HTML>
         let begin_at = self.mem_position;
-        if let Some(detect) = &self.detect {
-          let next_chars = DETECT_CHAR_MAP.get(detect).unwrap();
+        if let Some(next_chars) = &self.detect {
           let total_len = self.prev_chars.len();
           let actual_len = next_chars.len();
           if total_len < actual_len {
@@ -1362,11 +1359,13 @@ impl<'a> Doc<'a> {
           }
         } else {
           match c {
-            '-' => {
-              self.detect = Some(DetectChar::Comment);
-            }
-            'D' => {
-              self.detect = Some(DetectChar::DOCTYPE);
+            '-' | 'D' => {
+              let detect_type = if c == '-' {
+                DetectChar::Comment
+              } else {
+                DetectChar::DOCTYPE
+              };
+              self.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
             }
             _ => {
               return Err(ParseError::new(
