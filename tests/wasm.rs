@@ -1,4 +1,4 @@
-use rxhtml::parse;
+use rphtml::parse;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 #[wasm_bindgen_test]

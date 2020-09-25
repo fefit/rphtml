@@ -1,11 +1,11 @@
 [package]
-name = "rxhtml"
+name = "rphtml"
 version = "0.0.1"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
 description = "a html parser write in rust."
-repository = "https://github.com/fefit/rxhtml"
+repository = "https://github.com/fefit/rphtml"
 
 [dependencies]
 lazy_static = "1.4.0"
@@ -15,7 +15,7 @@ serde_json = "1.0.57"
 console_error_panic_hook = "0.1.6"
 
 [lib]
-name = "rxhtml"
+name = "rphtml"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
@@ -28,5 +28,5 @@ name = "benchmark"
 harness = false
 
 [[bin]]
-name="rxhtml"
+name="rphtml"
 path="src/main.rs"

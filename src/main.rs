@@ -1,5 +1,5 @@
-use rxhtml::config::{ParseOptions, RenderOptions};
-use rxhtml::parser::*;
+use rphtml::config::{ParseOptions, RenderOptions};
+use rphtml::parser::*;
 
 fn main() {
   let parse_options: ParseOptions = Default::default();

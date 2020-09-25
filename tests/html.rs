@@ -1,4 +1,4 @@
-use rxhtml::parser::*;
+use rphtml::parser::*;
 
 #[test]
 #[should_panic]
