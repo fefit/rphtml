@@ -736,6 +736,7 @@ impl<'a> Doc<'a> {
       for c in line.unwrap().chars() {
         self.next(c)?;
       }
+      self.next('\n')?;
     }
     self.eof()?;
     Ok(Rc::clone(&self.root))
@@ -819,6 +820,8 @@ impl<'a> Doc<'a> {
         let mut is_self_closing = false;
         let mut current_node = self.current_node.borrow_mut();
         let mut tag_name: String = String::from("");
+        // void elements
+        let mut is_void_element = false;
         match current_node.meta.as_mut() {
           Some(meta) => {
             let mut meta = meta.borrow_mut();
@@ -843,12 +846,7 @@ impl<'a> Doc<'a> {
                   }
                 } else if is_end {
                   meta.is_end = true;
-                  // void elements
-                  let is_void_element = VOID_ELEMENTS.contains(&meta.name.to_lowercase().as_str());
-                  if is_void_element {
-                    // pop void element meet tag end '>'
-                    self.chain_nodes.pop();
-                  }
+                  is_void_element = VOID_ELEMENTS.contains(&meta.name.to_lowercase().as_str());
                   // self-closing tags
                   if tag_in_wait {
                     if self.prev_char == '/' {
@@ -936,11 +934,18 @@ impl<'a> Doc<'a> {
                             self.position,
                           ));
                         }
-                      }
-                      if !tag_in_wait {
                         // end the key or value
                         meta.tag_in = Wait;
                         is_end_key_or_value = true;
+                      } else {
+                        if meta.tag_in == Value {
+                          // value allow long string with '/'
+                        } else {
+                          if !tag_in_wait {
+                            is_end_key_or_value = true;
+                          }
+                          meta.tag_in = Wait;
+                        }
                       }
                     }
                     _ => {
@@ -1017,11 +1022,7 @@ impl<'a> Doc<'a> {
             if is_whitespace || is_end || c == '/' {
               let cur_tag_name: String = self.chars_to_string();
               if is_whitespace {
-                if self.code_in == HTMLDOCTYPE
-                  && (cur_tag_name != "DOCTYPE"
-                    || (self.parse_options.case_sensitive_tagname
-                      && cur_tag_name.to_ascii_uppercase() != "DOCTYPE"))
-                {
+                if self.code_in == HTMLDOCTYPE && cur_tag_name.to_ascii_uppercase() != "DOCTYPE" {
                   return Err(ParseError::new(
                     ErrorKind::WrongHtmlDoctype(c),
                     self.position,
@@ -1042,6 +1043,8 @@ impl<'a> Doc<'a> {
                     // tag end
                     if is_end {
                       is_node_end = true;
+                      is_void_element =
+                        VOID_ELEMENTS.contains(&cur_tag_name.to_lowercase().as_str());
                     }
                   }
                   _ => unreachable!("just detect code in HTMLDOCTYPE and TAG"),
@@ -1097,6 +1100,11 @@ impl<'a> Doc<'a> {
                 self.code_in = Unkown;
               }
             }
+            // void elements
+            if is_void_element {
+              self.chain_nodes.pop();
+            }
+            // reset chars
             self.prev_chars.clear();
           } else {
             self.code_in = Unkown;
@@ -1192,7 +1200,6 @@ impl<'a> Doc<'a> {
             // remove the matched tag from the chain nodes
             self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
-            println!("{:?}", self.chain_nodes);
             return Err(ParseError::new(
               ErrorKind::WrongEndTag(end_tag_name),
               self.current_node.borrow().begin_at,
@@ -1329,7 +1336,7 @@ impl<'a> Doc<'a> {
           let actual_len = next_chars.len();
           if total_len < actual_len {
             let cur_should_be = next_chars.get(total_len).unwrap();
-            if cur_should_be == &c {
+            if cur_should_be == &c.to_ascii_uppercase() {
               if total_len == actual_len - 1 {
                 match c {
                   '-' => {
@@ -1340,7 +1347,7 @@ impl<'a> Doc<'a> {
                       begin_at,
                     ))));
                   }
-                  'E' => {
+                  'E' | 'e' => {
                     self.code_in = HTMLDOCTYPE;
                     // new html doctype node
                     new_node = Some(Rc::new(RefCell::new(Node::new(
@@ -1364,7 +1371,7 @@ impl<'a> Doc<'a> {
           }
         } else {
           match c {
-            '-' | 'D' => {
+            '-' | 'D' | 'd' => {
               let detect_type = if c == '-' {
                 DetectChar::Comment
               } else {
@@ -1491,7 +1498,7 @@ impl<'a> Doc<'a> {
       if self.repeat_whitespace {
         last_node.node_type = NodeType::SpacesBetweenTag;
       }
-    } else if self.code_in != Unkown {
+    } else if self.code_in != Unkown && self.code_in != AbstractRoot {
       return Err(ParseError::new(
         ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
         self.current_node.borrow().begin_at,

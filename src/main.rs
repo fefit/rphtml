@@ -24,6 +24,19 @@ fn main() -> Result<(), Box<dyn Error>> {
       };
     }
   }
+  // let mut doc = Doc::new();
+  // let result = doc.parse_file(
+  //   "cases/3737f33c1f2366581f2ee45ded2d94adc0e7d9e6ca00fc094eaecbfaa0daa8e9.html",
+  //   Default::default(),
+  // );
+  // println!("result is {:?}", result?);
+  // let result2 = doc.parse(
+  //   r##"
+  // <a href='/'  target = '_self' ><IMG SRC=http://www.necn.com/menu_images/25517.jpg border=0></a>
+  // "##,
+  //   Default::default(),
+  // );
+  // println!("cur result is {:?}", result2?);
   Ok(())
   // let result = doc.parse(
   //   r###"<a> </a><svg>   <!--this is a comment--> <missing-glyph><path d="M0,0h200v200h-200z"/></missing-glyph><rect x="10" y="10" width="30" height="30" stroke="black" fill="transparent" stroke-width="5"/> </svg>"###,
