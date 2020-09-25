@@ -104,8 +104,6 @@ lazy_static! {
     use SpecialTag::*;
     let mut map = HashMap::new();
     map.insert("pre", Pre);
-    map.insert("textarea", EscapeableRawText);
-    map.insert("title", EscapeableRawText);
     map.insert("svg", Svg);
     map.insert("math", MathML);
     map
@@ -127,17 +125,18 @@ pub enum NodeType {
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum CodeTypeIn {
-  AbstractRoot,     // abstract root node,the begin node of document
-  Unkown,           // wait for detect node
-  UnkownTag,        // is a tag begin with '<', but need more diagnosis
-  Tag,              // the start tag\self-closing tag\autofix empty tag
-  TagEnd,           // the end tag
-  ExclamationBegin, // tag begin with '!' maybe Comment|HTMLDOCTYPE
-  Comment,          // comment tag
-  HTMLDOCTYPE,      // html doctype
-  HTMLScript,       // html script
-  HTMLStyle,        // html css style
-  TextNode,         // text node
+  AbstractRoot,      // abstract root node,the begin node of document
+  Unkown,            // wait for detect node
+  UnkownTag,         // is a tag begin with '<', but need more diagnosis
+  Tag,               // the start tag\self-closing tag\autofix empty tag
+  TagEnd,            // the end tag
+  ExclamationBegin,  // tag begin with '!' maybe Comment|HTMLDOCTYPE
+  Comment,           // comment tag
+  HTMLDOCTYPE,       // html doctype
+  EscapeableRawText, // escapeable raw text, <title> and <textarea>
+  HTMLScript,        // html script
+  HTMLStyle,         //html style
+  TextNode,          // text node
 }
 
 pub fn is_identity(chars: &Vec<char>) -> bool {
@@ -589,7 +588,6 @@ impl<'a> Node<'a> {
 #[derive(Debug, Serialize, Deserialize, Hash, Clone, Copy, PartialEq)]
 pub enum SpecialTag {
   Pre,
-  EscapeableRawText,
   MathML,
   Svg,
   Template,
@@ -612,7 +610,7 @@ impl SpecialTag {
       _ => {}
     };
     match &self {
-      Pre | EscapeableRawText => {
+      Pre => {
         let message = format!(
           "the tag '{}' can only contains text node, wrong '{:?}' at {:?}",
           tag_name, code_in, position
@@ -1076,12 +1074,12 @@ impl<'a> Doc<'a> {
         if is_node_end {
           if is_in_tag {
             match tag_name.to_lowercase().as_str() {
-              name @ "script" | name @ "style" => {
+              name @ "script" | name @ "style" | name @ "title" | name @ "textarea" => {
                 self.mem_position = self.position;
-                self.code_in = if name == "script" {
-                  HTMLScript
-                } else {
-                  HTMLStyle
+                self.code_in = match name {
+                  "script" => HTMLScript,
+                  "style" => HTMLStyle,
+                  _ => EscapeableRawText,
                 };
                 let mut next_chars = vec!['<', '/'];
                 let tag_chars: Vec<_> = tag_name.chars().collect();
@@ -1194,6 +1192,7 @@ impl<'a> Doc<'a> {
             // remove the matched tag from the chain nodes
             self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
+            println!("{:?}", self.chain_nodes);
             return Err(ParseError::new(
               ErrorKind::WrongEndTag(end_tag_name),
               self.current_node.borrow().begin_at,
@@ -1203,7 +1202,7 @@ impl<'a> Doc<'a> {
           self.prev_chars.push(c);
         }
       }
-      HTMLScript | HTMLStyle => {
+      HTMLScript | HTMLStyle | EscapeableRawText => {
         let end_tag = self
           .detect
           .as_ref()

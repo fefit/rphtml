@@ -1,20 +1,30 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
+use std::error::Error;
+use std::{env, fs};
+fn main() -> Result<(), Box<dyn Error>> {
+  let current_dir = env::current_dir()?;
+  let source_dir = current_dir.join("cases").canonicalize()?;
+  for entry in fs::read_dir(source_dir)? {
+    let entry = entry?;
+    let filename = entry.path();
 
-fn main() {
-  let parse_options: ParseOptions = Default::default();
-  let mut doc = Doc::new();
-  let result = doc.parse(
-    r####"
+    let metadata = fs::metadata(&filename)?;
 
-  <div>
-        </div>
-
-        <br/>
-  "####,
-    parse_options,
-  );
-  println!("result: {:?}", result);
+    if metadata.is_file() {
+      let parse_options: ParseOptions = Default::default();
+      let mut doc = Doc::new();
+      let result = doc.parse_file(&filename, parse_options);
+      match result {
+        Ok(_) => {}
+        Err(e) => {
+          println!("{:?}: {:?}", filename, e);
+          return Err(e);
+        }
+      };
+    }
+  }
+  Ok(())
   // let result = doc.parse(
   //   r###"<a> </a><svg>   <!--this is a comment--> <missing-glyph><path d="M0,0h200v200h-200z"/></missing-glyph><rect x="10" y="10" width="30" height="30" stroke="black" fill="transparent" stroke-width="5"/> </svg>"###,
   //   parse_options
