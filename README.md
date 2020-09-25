@@ -25,6 +25,64 @@ const nodeList = rphtml.parse(htmlCode, {
   allow_fix_unclose: false,
   case_sensitive_tagname: false,
 });
+
+/*
+// will output like this
+{
+  tag_index: 0,
+  depth: 0,
+  node_type: 'AbstractRoot',
+  begin_at: { line_no: 1, col_no: 0 },
+  end_at: { line_no: 1, col_no: 0 },
+  end_tag: null,
+  parent: null,
+  content: null,
+  childs: [
+    {
+      tag_index: 0,
+      depth: 1,
+      node_type: 'SpacesBetweenTag',
+      begin_at: [Object],
+      end_at: [Object],
+      end_tag: null,
+      parent: null,
+      content: [Array],
+      childs: null,
+      meta: null,
+      special: null
+    },
+    {
+      tag_index: 1,
+      depth: 2,
+      node_type: 'Tag',
+      begin_at: [Object],
+      end_at: [Object],
+      end_tag: [Object],
+      parent: null,
+      content: null,
+      childs: [Array],
+      meta: [Object],
+      special: null
+    },
+    {
+      tag_index: 0,
+      depth: 1,
+      node_type: 'SpacesBetweenTag',
+      begin_at: [Object],
+      end_at: [Object],
+      end_tag: null,
+      parent: null,
+      content: [Array],
+      childs: null,
+      meta: null,
+      special: null
+    }
+  ],
+  meta: null,
+  special: null
+}
+*/
+
 const doneCode = rphtml.render(nodeList, {
   always_close_void: false,
   lowercase_tagname: true,
@@ -33,6 +91,11 @@ const doneCode = rphtml.render(nodeList, {
   remove_comment: false,
   remove_endtag_space: true,
 });
+
+/*
+// output
+<div class="header"><!--header--><h3>this is header.</h3></div>
+*/
 ```
 
 ## API

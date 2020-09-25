@@ -1,22 +1,22 @@
-const rxhtml = require("rxhtml");
-const htmlStrNodes = rxhtml.parse(`
-    <!DOCTYPE html>
-    <html>
-        <head>
-            <title>测试页面</title>
-        </head>
-        <body>
-            <!--注释-->
-            <div class="header">
-                测试header
-            </DIV   >
-        </body>
-    </html>
-`,{
-    allow_self_closing: true
+const rphtml = require("rphtml");
+const htmlCode = `
+<div class="header">
+  <!--header-->
+  <h3>this is header.</h3 >
+</div>
+`;
+const nodeList = rphtml.parse(htmlCode, {
+    allow_self_closing: true,
+    allow_fix_unclose: false,
+    case_sensitive_tagname: false,
 });
-console.log(JSON.stringify(htmlStrNodes, null, 4));
-const output = rxhtml.render(htmlStrNodes, {
-    minify_spaces: true
+console.log(nodeList);
+const doneCode = rphtml.render(nodeList, {
+    always_close_void: false,
+    lowercase_tagname: true,
+    minify_spaces: true,
+    remove_attr_quote: false,
+    remove_comment: false,
+    remove_endtag_space: true,
 });
-console.log(output);
+console.log(doneCode);
