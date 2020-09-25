@@ -237,7 +237,7 @@ export interface IJsNodeAttr {
   key?: string;
   value?: string;
   quote?: string;
-  need_quote: bool; 
+  need_quote: boolean; 
 }
 "#;
 
@@ -290,8 +290,8 @@ impl Attr {
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_NODE_TAGMETA: &'static str = r#"
 export interface IJsNodeTagMeta {
-  self_closed: bool;
-  auto_fix: bool;
+  self_closed: boolean;
+  auto_fix: boolean;
   name: string;
   attrs: IJsNodeAttr; 
 }
