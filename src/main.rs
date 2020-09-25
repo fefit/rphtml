@@ -4,9 +4,16 @@ use rphtml::parser::*;
 fn main() {
   let parse_options: ParseOptions = Default::default();
   let mut doc = Doc::new();
-  let result = doc.parse(r####"
-  <!DOCTYPE html PUBLIC a = b "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"> <script> asgsgkdsj </scRipt >
-  "####, parse_options);
+  let result = doc.parse(
+    r####"
+
+  <div>
+        </div>
+
+        <br/>
+  "####,
+    parse_options,
+  );
   println!("result: {:?}", result);
   // let result = doc.parse(
   //   r###"<a> </a><svg>   <!--this is a comment--> <missing-glyph><path d="M0,0h200v200h-200z"/></missing-glyph><rect x="10" y="10" width="30" height="30" stroke="black" fill="transparent" stroke-width="5"/> </svg>"###,

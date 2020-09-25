@@ -145,16 +145,16 @@ pub fn is_identity(chars: &Vec<char>) -> bool {
   let mut has_ns = false;
   for &c in chars {
     if is_first {
-      if !(c.is_ascii_alphabetic() || c == '_') {
+      if !(c.is_ascii_alphanumeric() || c == '_') {
         return false;
       }
       is_first = false;
       continue;
     }
-    if c.is_ascii_alphanumeric() || c == '-' {
+    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
       continue;
     }
-    if !has_ns && c == '.' {
+    if !has_ns && (c == '.' || c == ':') {
       has_ns = true;
       is_first = true;
       continue;
@@ -788,12 +788,12 @@ impl<'a> Doc<'a> {
           }
           _ => {
             // only whitespace allowed
-            if cur_depth == 1 && !c.is_ascii_whitespace() {
+            /* if cur_depth == 1 && !c.is_ascii_whitespace() {
               return Err(ParseError::new(
                 ErrorKind::WrongRootTextNode(c.to_string()),
                 self.position,
               ));
-            }
+            } */
             if self.code_in != TextNode {
               // new text node
               new_node = Some(Rc::new(RefCell::new(Node::new(
@@ -831,8 +831,8 @@ impl<'a> Doc<'a> {
                 let tag_in_wait = meta.tag_in == Wait;
                 let is_key = meta.tag_in == Key;
                 let mut is_end_key_or_value = false;
-                // tag in wait, if prev char is '?' or '/', the current char must be the end of tag
-                if tag_in_wait && (self.prev_char == '?' || self.prev_char == '/') && !is_end {
+                // tag in wait, if prev char is '/', the current char must be the end of tag
+                if tag_in_wait && self.prev_char == '/' && !is_end {
                   return Err(ParseError::new(
                     ErrorKind::UnexpectedCharacter(c),
                     self.position,
@@ -1016,10 +1016,14 @@ impl<'a> Doc<'a> {
             }
           }
           None => {
-            if is_whitespace || is_end {
+            if is_whitespace || is_end || c == '/' {
               let cur_tag_name: String = self.chars_to_string();
               if is_whitespace {
-                if self.code_in == HTMLDOCTYPE && cur_tag_name != "DOCTYPE" {
+                if self.code_in == HTMLDOCTYPE
+                  && (cur_tag_name != "DOCTYPE"
+                    || (self.parse_options.case_sensitive_tagname
+                      && cur_tag_name.to_ascii_uppercase() != "DOCTYPE"))
+                {
                   return Err(ParseError::new(
                     ErrorKind::WrongHtmlDoctype(c),
                     self.position,
@@ -1038,9 +1042,11 @@ impl<'a> Doc<'a> {
                   }
                   Tag => {
                     // tag end
-                    is_node_end = true;
+                    if is_end {
+                      is_node_end = true;
+                    }
                   }
-                  _ => unreachable!("enum all"),
+                  _ => unreachable!("just detect code in HTMLDOCTYPE and TAG"),
                 }
               }
               if !is_identity(&self.prev_chars) {
