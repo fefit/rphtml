@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     let result = doc.parse_file(&filename, parse_options);
   //     match result {
   //       Ok(tree) => {
-  //         println!("compile ok:{:?}{:?}", tree, doc.render(&Default::default()));
+  //         println!("compile ok:{:?}", tree);
   //       }
   //       Err(e) => {
   //         println!("{:?}: {:?}", filename, e);
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   // println!("result is {:?}", result?);
   let result2 = doc.parse(
     r##"
-  <a href='/'  target = '_self' ><IMG SRC=http://www.necn.com/menu_images/25517.jpg border=0></a>
+  <!--this-->
   "##,
     Default::default(),
   );
