@@ -1,14 +1,13 @@
 use rphtml::parser::*;
 
 #[test]
-#[should_panic]
 fn test_doctype() {
   let mut doc = Doc::new();
-  doc.parse("<!doctype>", Default::default());
+  doc.parse(r##"<!doctype html PUBLIC>"##, Default::default());
 }
 
 #[test]
-fn test_in_special() {
+fn test_valid_pre() {
   let mut doc = Doc::new();
   let _ = doc.parse("<pre>text in prev</pre><div></div>", Default::default());
   assert_eq!(doc.nodes.len(), 6);
