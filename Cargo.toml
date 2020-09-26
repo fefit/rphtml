@@ -1,11 +1,12 @@
 [package]
 name = "rphtml"
-version = "0.0.3"
+version = "0.0.5"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
 description = "a html parser write in rust."
 repository = "https://github.com/fefit/rphtml"
+keywords = ["html parser","html minify"]
 
 [dependencies]
 lazy_static = "1.4.0"

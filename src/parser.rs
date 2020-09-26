@@ -14,6 +14,8 @@ use std::rc::{Rc, Weak};
 use wasm_bindgen::prelude::*;
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
+const ALLOC_CHAR_CAPACITY: usize = 50;
+const ALLOC_NODES_CAPACITY: usize = 20;
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -245,7 +247,7 @@ pub struct Attr {
 impl Attr {
   // build attribute code
   pub fn build(&self, remove_quote: bool) -> String {
-    let mut ret = String::with_capacity(20);
+    let mut ret = String::with_capacity(ALLOC_CHAR_CAPACITY);
     let mut has_key = false;
     if let Some(key) = &self.key {
       ret.push_str(key);
@@ -367,15 +369,6 @@ pub struct JsNode {
   pub childs: Option<Vec<RefCell<Box<JsNode>>>>,
   pub meta: Option<RefCell<TagMeta>>,
   pub special: Option<SpecialTag>,
-}
-
-impl From<IJsNode> for JsNode {
-  fn from(node: IJsNode) -> Self {
-    match JsValue::into_serde(&node) {
-      Ok(result) => result,
-      Err(e) => panic!(e),
-    }
-  }
 }
 
 impl<'a> From<JsNode> for Node<'a> {
@@ -508,10 +501,9 @@ impl<'a> Node<'a> {
         result.push_str(tag.as_str());
         // add self closing
         if meta.self_closed || (meta.auto_fix && options.always_close_void) {
-          result.push_str(" />");
-        } else {
-          result.push('>');
+          result.push_str(" /");
         }
+        result.push(TAG_END_CHAR);
         // content for some special tags, such as style/script
         if let Some(_) = &self.content {
           result.push_str(get_content(&self.content).as_str());
@@ -557,7 +549,7 @@ impl<'a> Node<'a> {
   }
   // build node tree
   fn build_tree(&self, options: &RenderOptions, mut is_in_pre: bool) -> (String, bool) {
-    let mut result = String::with_capacity(200);
+    let mut result = String::with_capacity(ALLOC_CHAR_CAPACITY);
     use NodeType::*;
     if self.node_type != AbstractRoot {
       let (content, now_in_pre) = self.build_node(options, is_in_pre);
@@ -670,8 +662,8 @@ impl<'a> Doc<'a> {
     let ref_node = Rc::clone(&node);
     let current_node = Rc::clone(&node);
     let root = Rc::clone(&node);
-    let mut nodes = Vec::with_capacity(10);
-    let mut chain_nodes = Vec::with_capacity(10);
+    let mut nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
+    let mut chain_nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
     nodes.push(node);
     chain_nodes.push(ref_node);
     Doc {
@@ -679,7 +671,7 @@ impl<'a> Doc<'a> {
       position: CodePosAt::begin(),
       mem_position: CodePosAt::begin(),
       prev_char: ' ',
-      prev_chars: Vec::with_capacity(200),
+      prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
       nodes,
       chain_nodes,
       current_node,
@@ -746,6 +738,11 @@ impl<'a> Doc<'a> {
     self.prev_chars.iter().collect::<String>()
   }
 
+  fn clean_chars_return(&mut self) -> Vec<char> {
+    let mut content: Vec<char> = Vec::with_capacity(self.prev_chars.len());
+    content.append(&mut self.prev_chars);
+    content
+  }
   // read one char
   fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
     // add all CodeTypeIn enum item to namespace
@@ -772,7 +769,8 @@ impl<'a> Doc<'a> {
           // match the tag start '<'
           TAG_BEGIN_CHAR => {
             if self.code_in == TextNode {
-              self.current_node.borrow_mut().content = Some(self.prev_chars.clone());
+              let content = self.clean_chars_return();
+              self.current_node.borrow_mut().content = Some(content);
               self.check_textnode = if self.repeat_whitespace {
                 Some(Rc::clone(&self.current_node))
               } else {
@@ -783,7 +781,6 @@ impl<'a> Doc<'a> {
             }
             self.mem_position = self.position;
             self.code_in = UnkownTag;
-            self.prev_chars.clear();
           }
           _ => {
             // only whitespace allowed
@@ -811,11 +808,7 @@ impl<'a> Doc<'a> {
       }
       Tag | HTMLDOCTYPE => {
         let is_whitespace = c.is_ascii_whitespace();
-        let is_end = if is_whitespace {
-          false
-        } else {
-          c == TAG_END_CHAR
-        };
+        let is_end = c == TAG_END_CHAR;
         let is_in_tag = self.code_in == Tag;
         let mut is_self_closing = false;
         let mut current_node = self.current_node.borrow_mut();
@@ -830,10 +823,11 @@ impl<'a> Doc<'a> {
             match meta.tag_in {
               Wait | Key | Value => {
                 let tag_in_wait = meta.tag_in == Wait;
-                let is_key = meta.tag_in == Key;
+                let tag_in_key = meta.tag_in == Key;
                 let mut is_end_key_or_value = false;
+                let prev_is_end_slash = self.prev_char == '/';
                 // tag in wait, if prev char is '/', the current char must be the end of tag
-                if tag_in_wait && self.prev_char == '/' && !is_end {
+                if tag_in_wait && prev_is_end_slash && !is_end {
                   return Err(ParseError::new(
                     ErrorKind::UnexpectedCharacter(c),
                     self.position,
@@ -849,7 +843,7 @@ impl<'a> Doc<'a> {
                   is_void_element = VOID_ELEMENTS.contains(&meta.name.to_lowercase().as_str());
                   // self-closing tags
                   if tag_in_wait {
-                    if self.prev_char == '/' {
+                    if prev_is_end_slash {
                       if is_void_element {
                         // void element allow self closing
                         if self.parse_options.case_sensitive_tagname
@@ -863,13 +857,11 @@ impl<'a> Doc<'a> {
                       // void element has pop before.
                       } else {
                         if !self.parse_options.allow_self_closing {
-                          // sub element in Svg or MathML allow self-closings
-                          let is_in_xml_or_mathml = match self.in_special {
-                            Some((special, _)) => {
+                          // sub element in Svg or MathML allow self-closing
+                          let is_in_xml_or_mathml =
+                            self.in_special.map_or(false, |(special, _)| {
                               special == SpecialTag::Svg || special == SpecialTag::MathML
-                            }
-                            None => false,
-                          };
+                            });
                           if !is_in_xml_or_mathml {
                             return Err(ParseError::new(
                               ErrorKind::WrongCaseSensitive(meta.name.clone()),
@@ -896,7 +888,7 @@ impl<'a> Doc<'a> {
                 } else {
                   match c {
                     '"' | '\'' if tag_in_wait => {
-                      // if not in kv
+                      // if not in kv, quoted value should have spaces before.
                       if !meta.is_in_kv {
                         if !self.prev_char.is_ascii_whitespace() {
                           return Err(ParseError::new(
@@ -904,49 +896,49 @@ impl<'a> Doc<'a> {
                             self.position,
                           ));
                         }
-                        meta.attr_index += 1;
+                        // add new value-only attribute
                         meta.attrs.push(Default::default());
                       } else {
+                        // meta is now in value of 'key=value'
                         meta.is_in_kv = false;
                       }
                       // reset previous state
                       meta.prev_is_key = false;
-                      self.prev_chars.clear();
                       meta.tag_in = if c == '"' {
                         DoubleQuotedValue
                       } else {
                         SingleQuotedValue
                       };
+                      self.prev_chars.clear();
                     }
-                    '/' | '=' => {
-                      if c == '/' && self.code_in != Tag {
+                    '/' => {
+                      if self.code_in != Tag {
                         return Err(ParseError::new(
                           ErrorKind::WrongTag(String::from("/")),
                           self.position,
                         ));
                       }
-                      if c == '=' {
-                        if meta.prev_is_key {
-                          meta.is_in_kv = true;
-                        } else {
-                          return Err(ParseError::new(
-                            ErrorKind::WrongTag(String::from("=")),
-                            self.position,
-                          ));
-                        }
-                        // end the key or value
-                        meta.tag_in = Wait;
-                        is_end_key_or_value = true;
+                      if meta.tag_in == Value {
+                        // value allow string with slash '/'
                       } else {
-                        if meta.tag_in == Value {
-                          // value allow long string with '/'
-                        } else {
-                          if !tag_in_wait {
-                            is_end_key_or_value = true;
-                          }
-                          meta.tag_in = Wait;
+                        if !tag_in_wait {
+                          is_end_key_or_value = true;
                         }
+                        meta.tag_in = Wait;
                       }
+                    }
+                    '=' => {
+                      if meta.prev_is_key {
+                        meta.is_in_kv = true;
+                      } else {
+                        return Err(ParseError::new(
+                          ErrorKind::WrongTag(String::from("=")),
+                          self.position,
+                        ));
+                      }
+                      // end the key or value
+                      meta.tag_in = Wait;
+                      is_end_key_or_value = true;
                     }
                     _ => {
                       if tag_in_wait {
@@ -958,8 +950,8 @@ impl<'a> Doc<'a> {
                         } else {
                           meta.tag_in = Key;
                           // move attribute index
-                          meta.attr_index += 1;
                           meta.prev_is_key = true;
+                          meta.attrs.push(Default::default());
                         }
                       }
                       self.prev_chars.push(c);
@@ -968,24 +960,19 @@ impl<'a> Doc<'a> {
                 }
                 if is_end_key_or_value {
                   // if end of the key or value
-                  let attr_index = meta.attr_index as usize;
-                  if meta.attrs.len() <= attr_index {
-                    meta.attrs.push(Default::default());
-                  };
-                  let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                  let cur_attr = meta.attrs.last_mut().expect("the attr must have");
                   let value = self.chars_to_string();
-                  if is_key {
+                  self.prev_chars.clear();
+                  if tag_in_key {
                     cur_attr.key = Some(value);
                   } else {
                     cur_attr.value = Some(value);
                   };
                   meta.tag_in = Wait;
-                  self.prev_chars.clear();
                 }
               }
               DoubleQuotedValue | SingleQuotedValue => {
                 let is_in_translate = meta.is_in_translate;
-                let attr_index = meta.attr_index as usize;
                 if is_in_translate {
                   meta.is_in_translate = false;
                   self.prev_chars.push(c);
@@ -994,7 +981,7 @@ impl<'a> Doc<'a> {
                     || (meta.tag_in == SingleQuotedValue && c == '\'')
                   {
                     meta.tag_in = Wait;
-                    let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                    let cur_attr = meta.attrs.last_mut().expect("current attr must have");
                     cur_attr.quote = Some(c);
                     cur_attr.value = Some(self.chars_to_string());
                     self.prev_chars.clear();
@@ -1004,7 +991,7 @@ impl<'a> Doc<'a> {
                       meta.is_in_translate = true;
                       need_quote = true;
                     }
-                    let cur_attr = meta.attrs.get_mut(attr_index).unwrap();
+                    let cur_attr = meta.attrs.last_mut().expect("current attr must have");
                     if !cur_attr.need_quote
                       && (need_quote
                         || c.is_ascii_whitespace()
@@ -1197,6 +1184,7 @@ impl<'a> Doc<'a> {
               self.in_special = None;
             }
             self.code_in = Unkown;
+            self.prev_chars.clear();
             // remove the matched tag from the chain nodes
             self.chain_nodes.truncate(cur_depth - back_num - 1);
           } else {
@@ -1218,10 +1206,10 @@ impl<'a> Doc<'a> {
         let mut chars_len = self.prev_chars.len();
         // parse html script tag and style tag
         match c {
-          '<' => {
+          TAG_BEGIN_CHAR => {
             self.mem_position = self.position;
           }
-          '>'
+          TAG_END_CHAR
             if (chars_len == total_len && !self.prev_char.is_ascii_whitespace())
               || chars_len > total_len =>
           {
@@ -1259,9 +1247,10 @@ impl<'a> Doc<'a> {
               end.parent = Some(Rc::downgrade(&self.current_node));
               // set tag node's content, end_tag
               let node = Rc::new(RefCell::new(end));
+              let content = self.clean_chars_return();
               let mut current_node = self.current_node.borrow_mut();
               current_node.end_tag = Some(Rc::clone(&node));
-              current_node.content = Some(self.prev_chars.clone());
+              current_node.content = Some(content);
               self.nodes.push(node);
               // remove current tag
               self.chain_nodes.pop();
@@ -1275,23 +1264,24 @@ impl<'a> Doc<'a> {
       }
       Comment => {
         // comment node
-        let mut is_end = false;
+        let mut comment_has_ended = false;
         const END_SYMBOL: char = '-';
-        if c == '>' && self.prev_char == END_SYMBOL {
+        if c == TAG_END_CHAR && self.prev_char == END_SYMBOL {
           let total_len = self.prev_chars.len();
           if total_len >= 2 {
             let last_index = total_len - 2;
             let prev_last_char = self.prev_chars[last_index];
             if prev_last_char == END_SYMBOL {
-              is_end = true;
-              self.current_node.borrow_mut().content =
-                Some(self.prev_chars[2..last_index].to_vec());
-              is_node_end = true;
+              let content = self.clean_chars_return();
+              self.current_node.borrow_mut().content = Some(content);
               self.code_in = Unkown;
+              // set node ended
+              comment_has_ended = true;
+              is_node_end = true;
             }
           }
         }
-        if !is_end {
+        if !comment_has_ended {
           self.prev_chars.push(c);
         }
       }
@@ -1341,6 +1331,7 @@ impl<'a> Doc<'a> {
                 match c {
                   '-' => {
                     self.code_in = Comment;
+                    self.prev_chars.clear();
                     // new comment node
                     new_node = Some(Rc::new(RefCell::new(Node::new(
                       NodeType::Comment,
@@ -1483,7 +1474,12 @@ impl<'a> Doc<'a> {
     if cur_depth > 1 {
       let last_node = self.chain_nodes[cur_depth - 1].borrow();
       let begin_at = last_node.begin_at;
-      let name = &last_node.meta.as_ref().unwrap().borrow().name;
+      let name = &last_node
+        .meta
+        .as_ref()
+        .expect("tag node's meta must have")
+        .borrow()
+        .name;
       return Err(ParseError::new(
         ErrorKind::UnclosedTag(name.to_owned()),
         begin_at,
