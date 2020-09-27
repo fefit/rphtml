@@ -3,43 +3,49 @@ use rphtml::parser::*;
 use std::error::Error;
 use std::{env, fs};
 fn main() -> Result<(), Box<dyn Error>> {
-  // let current_dir = env::current_dir()?;
-  // let source_dir = current_dir.join("cases").canonicalize()?;
-  // for entry in fs::read_dir(source_dir)? {
-  //   let entry = entry?;
-  //   let filename = entry.path();
+  let current_dir = env::current_dir()?;
+  let source_dir = current_dir.join("cases").canonicalize()?;
+  for entry in fs::read_dir(source_dir)? {
+    let entry = entry?;
+    let filename = entry.path();
 
-  //   let metadata = fs::metadata(&filename)?;
+    let metadata = fs::metadata(&filename)?;
 
-  //   if metadata.is_file() {
-  //     let parse_options: ParseOptions = Default::default();
-  //     let mut doc = Doc::new();
-  //     let result = doc.parse_file(&filename, parse_options);
-  //     match result {
-  //       Ok(tree) => {
-  //         println!("compile ok:{:?}", tree);
-  //       }
-  //       Err(e) => {
-  //         println!("{:?}: {:?}", filename, e);
-  //         return Err(e);
-  //       }
-  //     };
-  //   }
-  // }
-  let mut doc = Doc::new();
-  // let result = doc.parse_file(
-  //   "cases/3737f33c1f2366581f2ee45ded2d94adc0e7d9e6ca00fc094eaecbfaa0daa8e9.html",
+    if metadata.is_file() {
+      let parse_options: ParseOptions = Default::default();
+      let mut doc = Doc::new();
+      let result = doc.parse_file(&filename, parse_options);
+      match result {
+        Ok(_) => {
+          println!("compile ok");
+        }
+        Err(e) => {
+          println!("{:?}: {:?}", filename, e);
+          return Err(e);
+        }
+      };
+    }
+  }
+  // let mut doc = Doc::new();
+  // let result = doc.parse(
+  //   r##"
+  // <!--this-->
+  // <!doctype html PUBLIC "http://www.w3c.com">
+  // <html>
+  //   <head>
+  //     <title><div> is a special tag</title>
+  //     <meta charset="utf-8">
+  //   </head>
+  //   <body>
+  //     <br><br>
+  //     <h3 id="id" class=aaa>LOGO</h3>
+  //   </body>
+  // </html>
+  // "##,
   //   Default::default(),
   // );
-  // println!("result is {:?}", result?);
-  let result2 = doc.parse(
-    r##"
-  <!--this-->
-  "##,
-    Default::default(),
-  );
-  println!("cur result is {:?}", result2?);
-  println!("render ===> {:?}", doc.render(&Default::default()));
+  // println!("cur result is {:?}", result?);
+  // println!("render ===> {:?}", doc.render(&Default::default()));
   Ok(())
   // let result = doc.parse(
   //   r###"<a> </a><svg>   <!--this is a comment--> <missing-glyph><path d="M0,0h200v200h-200z"/></missing-glyph><rect x="10" y="10" width="30" height="30" stroke="black" fill="transparent" stroke-width="5"/> </svg>"###,
