@@ -183,27 +183,35 @@ fn get_content(content: &Option<Vec<char>>) -> String {
  * the doc's position
 */
 #[wasm_bindgen]
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
+  pub index: i32,
 }
 
 impl fmt::Debug for CodePosAt {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let output = format!("[line:{},col:{}]", self.line_no, self.col_no);
+    let output = format!(
+      "[line:{},col:{},index:{}]",
+      self.line_no, self.col_no, self.index
+    );
     f.write_str(output.as_str())
   }
 }
 
 impl CodePosAt {
   // new
-  pub fn new(line_no: u32, col_no: u32) -> Self {
-    CodePosAt { line_no, col_no }
+  pub fn new(line_no: u32, col_no: u32, index: i32) -> Self {
+    CodePosAt {
+      line_no,
+      col_no,
+      index,
+    }
   }
   // create a begin position
   pub fn begin() -> Self {
-    CodePosAt::new(1, 0)
+    CodePosAt::new(1, 0, -1)
   }
   // jump to new line
   pub fn set_new_line(&mut self) {
@@ -213,12 +221,14 @@ impl CodePosAt {
   // move to next col
   pub fn move_one(&mut self) {
     self.col_no += 1;
+    self.index += 1;
   }
   // get the next col position
   pub fn next_col(&self) -> Self {
     CodePosAt {
       line_no: self.line_no,
       col_no: self.col_no + 1,
+      index: self.index + 1,
     }
   }
 }
@@ -241,10 +251,17 @@ export interface IJsNodeAttr {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Attr {
-  pub key: Option<String>,
-  pub value: Option<String>,
+  pub key: Option<AttrData>,
+  pub value: Option<AttrData>,
   pub quote: Option<char>,
   pub need_quote: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct AttrData {
+  pub content: String,
+  pub begin_at: CodePosAt,
+  pub end_at: CodePosAt,
 }
 
 impl Attr {
@@ -252,11 +269,11 @@ impl Attr {
   pub fn build(&self, remove_quote: bool) -> String {
     let mut ret = String::with_capacity(ALLOC_CHAR_CAPACITY);
     let mut has_key = false;
-    if let Some(key) = &self.key {
-      ret.push_str(key);
+    if let Some(AttrData { content, .. }) = &self.key {
+      ret.push_str(content);
       has_key = true;
     }
-    if let Some(value) = &self.value {
+    if let Some(AttrData { content, .. }) = &self.value {
       if has_key {
         ret.push('=');
       }
@@ -267,7 +284,7 @@ impl Attr {
           use_quote = Some(quote);
         }
       }
-      ret.push_str(value);
+      ret.push_str(content);
       if let Some(quote) = use_quote {
         ret.push(quote);
       }
@@ -793,6 +810,7 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
                   } else {
                     SingleQuotedValue
                   };
+                  doc.mem_position = doc.position;
                   doc.prev_chars.clear();
                 }
                 '/' => {
@@ -837,6 +855,7 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
                       meta.prev_is_key = true;
                       meta.attrs.push(Default::default());
                     }
+                    doc.mem_position = doc.position;
                   }
                   doc.prev_chars.push(c);
                 }
@@ -847,11 +866,12 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
               let tag_in_key = meta.tag_in == Key;
               let cur_attr = meta.attrs.last_mut().expect("the attr must have");
               let value = doc.chars_to_string();
+              let attr_data = doc.make_attr_data(value);
               doc.prev_chars.clear();
               if tag_in_key {
-                cur_attr.key = Some(value);
+                cur_attr.key = Some(attr_data);
               } else {
-                cur_attr.value = Some(value);
+                cur_attr.value = Some(attr_data);
               };
               meta.tag_in = Wait;
             }
@@ -868,7 +888,7 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
                 meta.tag_in = Wait;
                 let cur_attr = meta.attrs.last_mut().expect("current attr must have");
                 cur_attr.quote = Some(c);
-                cur_attr.value = Some(doc.chars_to_string());
+                cur_attr.value = Some(doc.make_attr_data(doc.chars_to_string()));
                 doc.prev_chars.clear();
               } else {
                 let is_tran_slash = c == '\\';
@@ -1110,6 +1130,7 @@ fn parse_special_tag<'a>(doc: &mut Doc, c: char) -> HResult {
   match c {
     TAG_BEGIN_CHAR => {
       doc.mem_position = doc.position;
+      doc.prev_chars.push(c);
     }
     TAG_END_CHAR
       if (chars_len == total_len && !doc.prev_char.is_ascii_whitespace())
@@ -1162,9 +1183,10 @@ fn parse_special_tag<'a>(doc: &mut Doc, c: char) -> HResult {
         doc.detect = None;
       }
     }
-    _ => {}
+    _ => {
+      doc.prev_chars.push(c);
+    }
   }
-  doc.prev_chars.push(c);
   Ok(())
 }
 
@@ -1319,10 +1341,10 @@ pub struct Doc<'a> {
   current_node: RefNode<'a>,
   tag_index: usize,
   in_special: Option<(SpecialTag, &'static str)>,
-  total_chars: usize,
   repeat_whitespace: bool,
   check_textnode: Option<RefNode<'a>>,
   handle: NextHandle<'a>,
+  pub total_chars: usize,
   pub parse_options: ParseOptions,
   pub nodes: Vec<RefNode<'a>>,
   pub root: RefNode<'a>,
@@ -1480,6 +1502,8 @@ impl<'a> Doc<'a> {
     // move one col for the code position
     if need_move_col {
       self.position.move_one();
+    } else {
+      self.position.index += 1;
     }
     // check if special, and character is ok
     if let Some((special, tag_name)) = self.in_special {
@@ -1546,6 +1570,14 @@ impl<'a> Doc<'a> {
       self.check_textnode = None;
     }
   }
+  // make attr data
+  fn make_attr_data(&self, content: String) -> AttrData {
+    AttrData {
+      content,
+      begin_at: self.mem_position.next_col(),
+      end_at: self.position.next_col(),
+    }
+  }
   // end of the doc
   fn eof(&mut self) -> Result<(), Box<dyn Error>> {
     let cur_depth = self.chain_nodes.len();
@@ -1573,6 +1605,7 @@ impl<'a> Doc<'a> {
       if self.repeat_whitespace {
         last_node.node_type = NodeType::SpacesBetweenTag;
       }
+      last_node.end_at = self.position;
     } else if self.code_in != Unkown && self.code_in != AbstractRoot {
       return Err(ParseError::new(
         ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
