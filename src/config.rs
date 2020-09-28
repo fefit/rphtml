@@ -40,7 +40,6 @@ pub struct ParseOptions {
   pub allow_self_closing: bool,     // allow self closing that not void elements
   pub allow_fix_unclose: bool,      // allow auto fix unclosed tag
 }
-
 #[derive(Default, Deserialize, Serialize)]
 pub struct JsParseOptions {
   pub case_sensitive_tagname: Option<bool>,

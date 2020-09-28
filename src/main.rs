@@ -29,19 +29,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut doc = Doc::new();
   let result = doc.parse(
     r##"
-  <!--this-->
-  <!doctype html PUBLIC "http://www.w3c.com">
-  <html>
-    <head>
-      <title><div> is a special tag</title>
-      <meta charset="utf-8">
-    </head>
-    <body>
-      <br><br>
-      <h3 id="id" class=aaa>LOGO</h3>
-      <textarea></textarea><br />
-    </body>
-  </html>
+<div class="header">
+  <!--header-->
+  <h3>this is header.</h3 >
+</div>
   "##,
     Default::default(),
   );
