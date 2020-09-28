@@ -11,7 +11,7 @@ const nodeList = rphtml.parse(htmlCode, {
   allow_fix_unclose: false,
   case_sensitive_tagname: false,
 });
-console.log(nodeList);
+console.log(nodeList.toJson());
 const doneCode = rphtml.render(nodeList, {
   always_close_void: false,
   lowercase_tagname: true,

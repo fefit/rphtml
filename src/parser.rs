@@ -1,4 +1,5 @@
 use crate::config::{ParseOptions, RenderOptions};
+use js_sys::Array;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -239,17 +240,105 @@ impl CodePosAt {
  * if value is None, it's a boolean attribute
  * if key is None,it's a value with quote
  */
-#[wasm_bindgen(typescript_custom_section)]
-const IJS_NODE_ATTR: &'static str = r#"
-export interface IJsNodeAttr {
-  key?: string;
-  value?: string;
-  quote?: string;
-  need_quote: boolean; 
+#[wasm_bindgen]
+pub struct IJsNodeTagMeta {
+  pub self_closed: bool,
+  pub auto_fix: bool,
+  #[wasm_bindgen(skip)]
+  pub r_name: String,
+  #[wasm_bindgen(skip)]
+  pub r_attr: Vec<IJsNodeAttr>,
 }
-"#;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+impl From<TagMeta> for IJsNodeTagMeta {
+  fn from(meta: TagMeta) -> Self {
+    let TagMeta {
+      self_closed,
+      auto_fix,
+      name,
+      attrs,
+      ..
+    } = meta;
+    IJsNodeTagMeta {
+      self_closed,
+      auto_fix,
+      r_name: name,
+      r_attr: attrs.into_iter().map(|attr| attr.into()).collect(),
+    }
+  }
+}
+
+#[wasm_bindgen]
+impl IJsNodeTagMeta {
+  #[wasm_bindgen(getter)]
+  pub fn attrs(&self) -> Array {
+    self.r_attr.clone().into_iter().map(JsValue::from).collect()
+  }
+  #[wasm_bindgen(getter)]
+  pub fn name(&self) -> String {
+    self.r_name.clone()
+  }
+}
+
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct IJsNodeAttr {
+  pub key: Option<IJsNodeAttrData>,
+  pub value: Option<IJsNodeAttrData>,
+  pub quote: Option<char>,
+  pub need_quote: bool,
+}
+
+impl From<Attr> for IJsNodeAttr {
+  fn from(attr: Attr) -> Self {
+    let Attr {
+      key,
+      value,
+      quote,
+      need_quote,
+    } = attr;
+    IJsNodeAttr {
+      key: key.map(|data| data.into()),
+      value: value.map(|data| data.into()),
+      quote,
+      need_quote,
+    }
+  }
+}
+
+#[wasm_bindgen]
+#[derive(Clone, Copy)]
+pub struct IJsNodeAttrData {
+  #[wasm_bindgen(skip)]
+  pub r_content: &'static str,
+  pub begin_at: CodePosAt,
+  pub end_at: CodePosAt,
+}
+
+#[wasm_bindgen]
+impl IJsNodeAttrData {
+  #[wasm_bindgen(getter)]
+  pub fn content(&self) -> String {
+    self.r_content.to_string()
+  }
+}
+
+impl From<AttrData> for IJsNodeAttrData {
+  fn from(data: AttrData) -> Self {
+    let AttrData {
+      content,
+      begin_at,
+      end_at,
+    } = data;
+    IJsNodeAttrData {
+      r_content: Box::leak(content.into_boxed_str()),
+      begin_at,
+      end_at,
+    }
+  }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Attr {
   pub key: Option<AttrData>,
   pub value: Option<AttrData>,
@@ -257,7 +346,7 @@ pub struct Attr {
   pub need_quote: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AttrData {
   pub content: String,
   pub begin_at: CodePosAt,
@@ -299,26 +388,22 @@ impl Attr {
  * auto_fix: if the tag either self-closing nor closed with a end tag, may auto fix by the parser
  * name: the tag name
  * attrs: the attribute list
- * attr_index: the current attribute index of the 'attrs'
 */
 
-#[wasm_bindgen(typescript_custom_section)]
-const IJS_NODE_TAGMETA: &'static str = r#"
-export interface IJsNodeTagMeta {
-  self_closed: boolean;
-  auto_fix: boolean;
-  name: string;
-  attrs: IJsNodeAttr; 
-}
-"#;
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagMeta {
-  attr_index: i32,
+  #[serde(skip)]
   prev_is_key: bool,
+
+  #[serde(skip)]
   is_in_kv: bool,
+
+  #[serde(skip)]
   is_in_translate: bool,
+
   tag_in: TagCodeIn,
+
+  #[serde(skip)]
   is_end: bool,
   pub self_closed: bool,
   pub auto_fix: bool,
@@ -357,60 +442,94 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
-#[wasm_bindgen(typescript_custom_section)]
-const IJS_NODE: &'static str = r#"
-export interface IJsNode {
-  tag_index: number;
-  depth: number;
-  node_type: NodeType;
-  begin_at: CodePosAt;
-  end_tag?: IJsNode;
-  content?: Array<string>; 
-  childs?: Array<IJsNode>;
-  meta?: IJsNodeTagMeta; 
-}
-"#;
-
 #[wasm_bindgen]
-extern "C" {
-  #[wasm_bindgen(typescript_type = "IJsNode")]
-  pub type IJsNode;
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsNode {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IJsNode {
   pub tag_index: usize,
   pub depth: usize,
   pub node_type: NodeType,
   pub begin_at: CodePosAt,
   pub end_at: CodePosAt,
-  pub end_tag: Option<RefCell<Box<JsNode>>>,
-  pub content: Option<Vec<char>>,
-  pub childs: Option<Vec<RefCell<Box<JsNode>>>>,
-  pub meta: Option<RefCell<TagMeta>>,
-  pub special: Option<SpecialTag>,
+  #[wasm_bindgen(skip)]
+  pub r_end_tag: Option<RefCell<Box<IJsNode>>>,
+  #[wasm_bindgen(skip)]
+  pub r_content: Option<Vec<char>>,
+  #[wasm_bindgen(skip)]
+  pub r_childs: Option<Vec<RefCell<Box<IJsNode>>>>,
+  #[wasm_bindgen(skip)]
+  pub r_meta: Option<RefCell<TagMeta>>,
+  #[wasm_bindgen(skip)]
+  pub r_special: Option<SpecialTag>,
 }
 
-impl<'a> From<JsNode> for Node<'a> {
-  fn from(node: JsNode) -> Self {
-    let JsNode {
+#[wasm_bindgen]
+extern "C" {
+  #[wasm_bindgen(typescript_type = "IJsNodeTree")]
+  pub type IJsNodeTree;
+}
+
+#[wasm_bindgen]
+impl IJsNode {
+  /* getters */
+  #[wasm_bindgen(getter)]
+  pub fn end_tag(&self) -> Option<IJsNode> {
+    self.r_end_tag.as_ref().map(|v| *v.clone().into_inner())
+  }
+  #[wasm_bindgen(getter)]
+  pub fn content(&self) -> Option<Array> {
+    self.r_content.as_ref().map(|v| {
+      v.into_iter()
+        .map(|c| JsValue::from(c.to_string()))
+        .collect()
+    })
+  }
+  #[wasm_bindgen(getter)]
+  pub fn childs(&self) -> Option<Array> {
+    self.r_childs.as_ref().map(|childs| {
+      childs
+        .into_iter()
+        .map(|v| JsValue::from(*v.clone().into_inner()))
+        .collect()
+    })
+  }
+  #[wasm_bindgen(getter)]
+  pub fn meta(&self) -> Option<IJsNodeTagMeta> {
+    self.r_meta.as_ref().map(|v| v.clone().into_inner().into())
+  }
+
+  #[wasm_bindgen(getter)]
+  pub fn special(&self) -> Option<String> {
+    self.r_special.map(|v| format!("{:?}", v))
+  }
+
+  /* methods */
+  #[wasm_bindgen(js_name = toJson)]
+  pub fn to_json(&self) -> Result<IJsNodeTree, JsValue> {
+    let result = JsValue::from_serde(self).map_err(|e| JsValue::from(&e.to_string()))?;
+    Ok(result.into())
+  }
+}
+
+impl<'a> From<IJsNode> for Node<'a> {
+  fn from(node: IJsNode) -> Self {
+    let IJsNode {
       tag_index,
       depth,
       node_type,
       begin_at,
       end_at,
-      end_tag,
-      content,
-      childs,
-      meta,
-      special,
+      r_end_tag,
+      r_content,
+      r_childs,
+      r_meta,
+      r_special,
     } = node;
-    let end_tag = end_tag.map(|tag| {
+    let end_tag = r_end_tag.map(|tag| {
       let tag = tag.into_inner();
       let last_tag = Node::from(*tag);
       Rc::new(RefCell::new(last_tag))
     });
-    let childs: Option<Vec<RefNode<'_>>> = childs.map(|child| {
+    let childs: Option<Vec<RefNode<'_>>> = r_childs.map(|child| {
       child
         .into_iter()
         .map(|tag| {
@@ -425,12 +544,51 @@ impl<'a> From<JsNode> for Node<'a> {
       node_type,
       begin_at,
       end_at,
-      content,
-      meta,
-      special,
+      content: r_content,
+      meta: r_meta,
+      special: r_special,
       parent: None,
       end_tag,
       childs,
+    }
+  }
+}
+
+impl<'a> From<Node<'a>> for IJsNode {
+  fn from(node: Node<'a>) -> Self {
+    let Node {
+      tag_index,
+      depth,
+      node_type,
+      begin_at,
+      end_at,
+      end_tag,
+      content,
+      childs,
+      meta,
+      special,
+      ..
+    } = node;
+    let r_end_tag = end_tag
+      .as_ref()
+      .map(|v| RefCell::new(Box::new(v.borrow_mut().clone().into())));
+    let r_childs = childs.as_ref().map(|childs| {
+      childs
+        .into_iter()
+        .map(|v| RefCell::new(Box::new(v.borrow_mut().clone().into())))
+        .collect()
+    });
+    IJsNode {
+      tag_index,
+      depth,
+      node_type,
+      begin_at,
+      end_at,
+      r_end_tag,
+      r_childs,
+      r_meta: meta,
+      r_special: special,
+      r_content: content,
     }
   }
 }
@@ -440,19 +598,25 @@ type RefNode<'a> = Rc<RefCell<Node<'a>>>;
 /**
  *
  */
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node<'a> {
-  pub tag_index: usize,             // if a tag node, add a index to the node
-  pub depth: usize,                 // the node's depth in the document
-  pub node_type: NodeType,          // the node's type
-  pub begin_at: CodePosAt,          // the node's start position '<'
-  pub end_at: CodePosAt,            // the node's end position '>'
+  pub tag_index: usize,    // if a tag node, add a index to the node
+  pub depth: usize,        // the node's depth in the document
+  pub node_type: NodeType, // the node's type
+  pub begin_at: CodePosAt, // the node's start position '<'
+  pub end_at: CodePosAt,   // the node's end position '>'
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub end_tag: Option<RefNode<'a>>, // the end tag </xx> of the tag node
+  #[serde(skip_serializing)]
   pub parent: Option<Weak<RefCell<Node<'a>>>>, // parent node, use weak reference,prevent reference loop
-  pub content: Option<Vec<char>>,              // the content,for text/comment/style/script nodes
-  pub childs: Option<Vec<RefNode<'a>>>,        // the child nodes
-  pub meta: Option<RefCell<TagMeta>>,          // the tag node meta information
-  pub special: Option<SpecialTag>,             // special
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub content: Option<Vec<char>>, // the content,for text/comment/style/script nodes
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub childs: Option<Vec<RefNode<'a>>>, // the child nodes
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub meta: Option<RefCell<TagMeta>>, // the tag node meta information
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub special: Option<SpecialTag>, // special
 }
 
 impl<'a> Node<'a> {
@@ -949,7 +1113,6 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
           let meta = TagMeta {
             name: cur_tag_name,
             attrs: Vec::with_capacity(5),
-            attr_index: -1,
             auto_fix: false,
             self_closed: false,
             tag_in: TagCodeIn::Wait,
@@ -1629,7 +1792,7 @@ impl<'a> Doc<'a> {
   }
   // render tree
   pub fn render_tree(&self, options: &RenderOptions) -> String {
-    self.root.borrow().build(options)
+    self.root.borrow_mut().build(options)
   }
   // render for js
   pub fn render_js_tree(tree: RefNode<'_>, options: &RenderOptions) -> String {
