@@ -76,48 +76,50 @@ console.log(code);
 
 ## API
 
-### `parse(content: string, parseOptions: IParseOptions):IJsNode`
+* ### `parse(content: string, parseOptions?: IJsParseOptions) : IJsNode`
+  parse html code to nodes.
 
-parse html code to nodes.
+  + #### argument: `IJsParseOptions`
 
-#### `IParseOptions`
+    - `allow_self_closing` if allow not void element use self-closing, e.g: `<div />`
 
-- `allow_self_closing` if allow not void element use self-closing, e.g: `<div />`
+    - `allow_fix_unclose` if allow empty tags such as `<div><button class="btn"></div>`,not recommend
 
-- `allow_fix_unclose` if allow empty tags such as `<div><button class="btn"></div>`,not recommend
+    - `case_sensitive_tagname` if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
 
-- `case_sensitive_tagname` if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
+ * ### return value: `IJsNode`
 
-### `render(node: IJsNode, renderOptions: IRenderOptions):string`
+    + #### `render(renderOptions?: IJsRenderOptions) : string`
+      render the node to html code.
 
-render the node to html code.
+      + #### render function argument: `IJsRenderOptions`
 
-#### `IRenderOptions`
+        - `always_close_void` always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
 
-- `always_close_void` always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
+        - `lowercase_tagname` if true, will always translate the tag's name to lowercase
 
-- `lowercase_tagname` if true, will always translate the tag's name to lowercase
+        - `minify_spaces` if true, will minify the spaces into one space if not in `pre` tag.
 
-- `minify_spaces` if true, will minify the spaces into one space if not in `pre` tag.
+        - `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
 
-- `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
+        - `remove_comment` if true, will remove all comments node.
 
-- `remove_comment` if true, will remove all comments node.
+        - `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
 
-- `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
+    + ### `toJson() : IJsNodeTree`
+      
+      ```javascript
+      {
+        tag_index: number; // the tag's index, just for element tag node.
+        depth: number; // the node's depth of the nested.
+        node_type: NodeType;
+        begin_at: CodePosAt;
+        end_at: CodePosAt;
+        end_tag?: IJsNodeTree; // the closed tag
+        meta?: IJsNodeTagMeta; // tag meta information.
+        childs: Array<IJsNodeTree>; // the childs of the tag.
+      }
 
-#### `IJsNode`
-
-```javascript
-{
-  tag_index: number; // the tag's index, just for element tag node.
-  depth: number; // the node's depth of the nested.
-  node_type: NodeType;
-  begin_at: CodePosAt;
-  end_at: CodePosAt;
-  end_tag?: IJsNode; // the closed tag
-  meta?: IJsTagMeta; // tag meta information.
-  childs: Array<IJsNode>; // the childs of the tag.
-}
-
-```
+      ```
+    + ### `toString() : string`
+      return the string of the json data, like `JSON.stringify()`
