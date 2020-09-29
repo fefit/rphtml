@@ -26,11 +26,16 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
+  let code = r##"<div></div><p></p>"##;
   let doc = Doc::parse(
-    r##"<title><div> tags are allowed here</div></title>"##,
-    Default::default(),
+    code,
+    ParseOptions {
+      allow_fix_unclose: true,
+      ..Default::default()
+    },
   )?;
+  let render_code = doc.render(&Default::default());
   println!("cur result is {:?}, {}", doc.root, doc.total_chars);
-  println!("render ===> {:?}", doc.render(&Default::default()));
+  println!("render ===> {:?}, {:?}", render_code, render_code == code);
   Ok(())
 }

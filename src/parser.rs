@@ -185,9 +185,9 @@ fn get_content(content: &Option<Vec<char>>) -> String {
 #[wasm_bindgen]
 #[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CodePosAt {
-  pub line_no: u32,
-  pub col_no: u32,
-  pub index: i32,
+  pub line_no: usize,
+  pub col_no: usize,
+  pub index: usize,
 }
 
 impl fmt::Debug for CodePosAt {
@@ -202,7 +202,7 @@ impl fmt::Debug for CodePosAt {
 
 impl CodePosAt {
   // new
-  pub fn new(line_no: u32, col_no: u32, index: i32) -> Self {
+  pub fn new(line_no: usize, col_no: usize, index: usize) -> Self {
     CodePosAt {
       line_no,
       col_no,
@@ -211,7 +211,7 @@ impl CodePosAt {
   }
   // create a begin position
   pub fn begin() -> Self {
-    CodePosAt::new(1, 0, -1)
+    CodePosAt::new(1, 0, 0)
   }
   // jump to new line
   pub fn set_new_line(&mut self) {
@@ -463,6 +463,9 @@ impl Node {
         // add self closing
         if meta.self_closed || (meta.auto_fix && options.always_close_void) {
           result.push_str(" /");
+        } else if meta.auto_fix && self.end_tag.is_none() {
+          result.push(TAG_END_CHAR);
+          result.push_str(format!("</{}", tag_name).as_str());
         }
         result.push(TAG_END_CHAR);
         // content for some special tags, such as style/script
@@ -494,7 +497,11 @@ impl Node {
           .as_ref()
           .expect("tag's meta data must have.")
           .borrow();
-        let content = format!("<!DOCTYPE{}>", meta.get_attrs(options.remove_attr_quote));
+        let content = format!(
+          "<!{}{}>",
+          meta.name,
+          meta.get_attrs(options.remove_attr_quote)
+        );
         result.push_str(content.as_str());
       }
       Comment if !options.remove_comment => {
@@ -764,6 +771,7 @@ fn parse_tag_and_doctype(doc: &mut Doc, c: char) -> HResult {
                   }
                   if meta.tag_in == Value {
                     // value allow string with slash '/'
+                    doc.prev_chars.push(c);
                   } else {
                     if !tag_in_wait {
                       is_end_key_or_value = true;
@@ -959,7 +967,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
     let mut iter = doc.chain_nodes.iter().rev();
     let mut back_num: usize = 0;
     let max_back_num: usize = if doc.parse_options.allow_fix_unclose {
-      doc.chain_nodes.len()
+      doc.chain_nodes.len() - 1
     } else {
       0
     };
@@ -985,7 +993,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
         }
       }
       back_num += 1;
-      if back_num > max_back_num {
+      if back_num >= max_back_num {
         break;
       }
     }
@@ -1004,36 +1012,17 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
       doc.set_tag_end_info();
       // set code in
       doc.set_code_in(Unkown);
+      // fix the empty tags
+      if empty_closed_tags.len() > 0 {
+        // reverse the tags, keep the childs order
+        empty_closed_tags.reverse();
+        doc.fix_unclosed_tag(empty_closed_tags, tag);
+      }
       // set end tag more info
       let mut current_node = doc.current_node.borrow_mut();
       current_node.parent = Some(Rc::downgrade(&tag));
       current_node.depth = tag.borrow().depth;
       current_node.content = Some(end_tag_name.chars().collect());
-      // change the empty tags
-      if empty_closed_tags.len() > 0 {
-        for tag_node in empty_closed_tags.iter_mut() {
-          let mut tag_node = tag_node.borrow_mut();
-          // change the parent node
-          tag_node.parent = Some(Rc::downgrade(tag));
-          // set it's meta as auto fix
-          if let Some(meta) = &tag_node.meta {
-            let mut meta = meta.borrow_mut();
-            meta.auto_fix = true;
-          }
-          // change all childs's parent and clear
-          if let Some(childs) = &tag_node.childs {
-            if childs.len() > 0 {
-              for child_node in childs.iter() {
-                let mut child_node = child_node.borrow_mut();
-                child_node.parent = Some(Rc::downgrade(tag));
-                child_node.depth -= back_num;
-              }
-            }
-          }
-          // clear childs
-          tag_node.childs = None;
-        }
-      }
       // end of special tag
       if doc.in_special.is_some() && doc.in_special.unwrap().1 == fix_end_tag_name {
         doc.in_special = None;
@@ -1110,7 +1099,7 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         let mut end = Node::new(NodeType::TagEnd, end_at);
         end.end_at = doc.position.next_col();
         end.content = Some(end_tag_name);
-        end.depth = doc.chain_nodes.len();
+        end.depth = doc.chain_nodes.len() - 1;
         end.parent = Some(Rc::downgrade(&doc.current_node));
         // set tag node's content, end_tag
         let node = Rc::new(RefCell::new(end));
@@ -1496,7 +1485,7 @@ impl Doc {
     };
     // skip set depth for tag end
     if node_type != TagEnd {
-      current_node.depth = self.chain_nodes.len();
+      current_node.depth = self.chain_nodes.len() - 1;
     }
   }
   // set spaces between tag
@@ -1510,8 +1499,50 @@ impl Doc {
   fn make_attr_data(&self, content: String) -> AttrData {
     AttrData {
       content,
-      begin_at: self.mem_position.next_col(),
-      end_at: self.position.next_col(),
+      begin_at: self.mem_position,
+      end_at: self.position,
+    }
+  }
+  // fix unclosed tag
+  fn fix_unclosed_tag(&mut self, mut unclosed: Vec<RefNode>, parent: &RefNode) {
+    let cur_depth = parent.borrow().depth + 1;
+    for tag_node in unclosed.iter_mut() {
+      let mut has_fixed = false;
+      let mut tag_node = tag_node.borrow_mut();
+      // set it's meta as auto fix
+      if let Some(meta) = &tag_node.meta {
+        let mut meta = meta.borrow_mut();
+        if meta.auto_fix {
+          has_fixed = true;
+        } else {
+          meta.auto_fix = true;
+        }
+      }
+      if !has_fixed {
+        // change the parent node
+        tag_node.parent = Some(Rc::downgrade(parent));
+        tag_node.depth = cur_depth;
+      }
+      // change all childs's parent and clear
+      if let Some(childs) = &tag_node.childs {
+        if childs.len() > 0 {
+          for child_node in childs.iter() {
+            parent
+              .borrow_mut()
+              .childs
+              .as_mut()
+              .map(|childs| childs.push(Rc::clone(child_node)));
+            let mut child_node = child_node.borrow_mut();
+            child_node.parent = Some(Rc::downgrade(parent));
+            child_node.depth = cur_depth;
+            if let Some(meta) = &child_node.meta {
+              meta.borrow_mut().auto_fix = true;
+            }
+          }
+        }
+      }
+      // clear childs
+      tag_node.childs = None;
     }
   }
   // end of the doc
@@ -1519,24 +1550,29 @@ impl Doc {
     let cur_depth = self.chain_nodes.len();
     // check if all tags are closed correctly.
     if cur_depth > 1 {
-      let last_node = self.chain_nodes[cur_depth - 1].borrow();
-      let begin_at = last_node.begin_at;
-      let name = &last_node
-        .meta
-        .as_ref()
-        .expect("tag node's meta must have")
-        .borrow()
-        .name;
-      return Err(ParseError::new(
-        ErrorKind::UnclosedTag(name.to_owned()),
-        begin_at,
-      ));
+      if !self.parse_options.allow_fix_unclose {
+        let last_node = self.chain_nodes[cur_depth - 1].borrow();
+        let begin_at = last_node.begin_at;
+        let name = &last_node
+          .meta
+          .as_ref()
+          .expect("tag node's meta must have")
+          .borrow()
+          .name;
+        return Err(ParseError::new(
+          ErrorKind::UnclosedTag(name.to_owned()),
+          begin_at,
+        ));
+      }
+      // fix unclosed tags
+      let unclosed = self.chain_nodes.split_off(1);
+      self.fix_unclosed_tag(unclosed, &Rc::clone(&self.root));
     }
     // check and fix last node info.
     use CodeTypeIn::*;
     if self.code_in == TextNode {
       let mut last_node = self.current_node.borrow_mut();
-      last_node.depth = cur_depth;
+      last_node.depth = 1;
       last_node.content = Some(self.prev_chars.clone());
       if self.repeat_whitespace {
         last_node.node_type = NodeType::SpacesBetweenTag;

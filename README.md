@@ -1,6 +1,8 @@
 # rphtml
 
-A html parser write in rust.
+A html parser write in rust, build wasm code for npm package.
+
+[![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.org/fefit/rphtml)
 
 # use in node
 
@@ -76,10 +78,11 @@ console.log(code);
 
 ## API
 
-* ### `parse(content: string, parseOptions?: IJsParseOptions) : IJsNode`
+- ### `parse(content: string, parseOptions?: IJsParseOptions) : IJsNode`
+
   parse html code to nodes.
 
-  + #### argument: `IJsParseOptions`
+  - #### argument: `IJsParseOptions`
 
     - `allow_self_closing` if allow not void element use self-closing, e.g: `<div />`
 
@@ -87,39 +90,41 @@ console.log(code);
 
     - `case_sensitive_tagname` if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
 
- ### return value: `IJsNode`
+### return value: `IJsNode`
 
-  + ### `render(renderOptions?: IJsRenderOptions) : string`
-    render the node to html code.
+- ### `render(renderOptions?: IJsRenderOptions) : string`
 
-    + #### render function argument: `IJsRenderOptions`
+  render the node to html code.
 
-      - `always_close_void` always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
+  - #### render function argument: `IJsRenderOptions`
 
-      - `lowercase_tagname` if true, will always translate the tag's name to lowercase
+    - `always_close_void` always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
 
-      - `minify_spaces` if true, will minify the spaces into one space if not in `pre` tag.
+    - `lowercase_tagname` if true, will always translate the tag's name to lowercase
 
-      - `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
+    - `minify_spaces` if true, will minify the spaces into one space if not in `pre` tag.
 
-      - `remove_comment` if true, will remove all comments node.
+    - `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
 
-      - `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
+    - `remove_comment` if true, will remove all comments node.
 
-  + ### `toJson() : IJsNodeTree`
-    
-    ```javascript
-    {
-      tag_index: number; // the tag's index, just for element tag node.
-      depth: number; // the node's depth of the nested.
-      node_type: NodeType;
-      begin_at: CodePosAt;
-      end_at: CodePosAt;
-      end_tag?: IJsNodeTree; // the closed tag
-      meta?: IJsNodeTagMeta; // tag meta information.
-      childs: Array<IJsNodeTree>; // the childs of the tag.
-    }
+    - `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
 
-    ```
-  + ### `toString() : string`
-    return the string of the json data, like `JSON.stringify()`
+- ### `toJson() : IJsNodeTree`
+
+  ```javascript
+  {
+    tag_index: number; // the tag's index, just for element tag node.
+    depth: number; // the node's depth of the nested.
+    node_type: NodeType;
+    begin_at: CodePosAt;
+    end_at: CodePosAt;
+    end_tag?: IJsNodeTree; // the closed tag
+    meta?: IJsNodeTagMeta; // tag meta information.
+    childs: Array<IJsNodeTree>; // the childs of the tag.
+  }
+
+  ```
+
+- ### `toString() : string`
+  return the string of the json data, like `JSON.stringify()`
