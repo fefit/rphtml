@@ -3,6 +3,7 @@
 A html parser write in rust, build wasm code for npm package.
 
 [![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.org/fefit/rphtml)
+[![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg?token=aKBpMDSv2o)](undefined)
 
 # use in node
 

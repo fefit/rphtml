@@ -161,6 +161,9 @@ fn test_attrs() -> HResult {
     });
     childs
   });
+  // wrong value
+  // assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
+  // assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
   Ok(())
 }
 
@@ -171,13 +174,69 @@ fn test_tag_close() -> HResult {
   assert_eq!(parse(code).is_err(), true);
   // allow code auto_fix
   let doc = Doc::parse(
-    code,
+    r#"<div id=1><div id=2><div id=3>3</div>"#,
     ParseOptions {
       allow_fix_unclose: true,
       ..Default::default()
     },
   );
   assert_eq!(doc.is_ok(), true);
-  assert_eq!(render(&doc?), "<div></div>");
+  assert_eq!(
+    render(&doc?),
+    "<div id=1></div><div id=2></div><div id=3>3</div>"
+  );
+  // wrong tag end
+  assert_eq!(parse("<div></p>").is_err(), true);
+  Ok(())
+}
+
+#[test]
+fn test_comment() -> HResult {
+  let code = r##"
+  <!---
+  // this is a comment
+  // --allowed
+  --->
+  "##;
+  let doc = parse(code)?;
+  assert_eq!(render(&doc), code);
+  assert_eq!(
+    doc.render(&RenderOptions {
+      minify_spaces: true,
+      remove_comment: true,
+      ..Default::default()
+    }),
+    ""
+  );
+  Ok(())
+}
+
+#[test]
+fn test_end_spaces() -> HResult {
+  let code = "<div></div >";
+  let doc = parse(code)?;
+  assert_eq!(
+    doc.render(&RenderOptions {
+      remove_endtag_space: true,
+      ..Default::default()
+    }),
+    "<div></div>"
+  );
+  Ok(())
+}
+
+#[test]
+fn test_svg_tag() -> HResult {
+  let code = r#"<svg version="1.1" baseProfile="full" width="300" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="red" /></svg>"#;
+  let doc = parse(code)?;
+  assert_eq!(render(&doc), code);
+  Ok(())
+}
+
+#[test]
+fn test_mathml_tag() -> HResult {
+  let code = r#"<math><mrow></mrow></math>"#;
+  let doc = parse(code)?;
+  assert_eq!(render(&doc), code);
   Ok(())
 }

@@ -91,6 +91,7 @@ pub enum ErrorKind {
 pub enum DetectChar {
   Comment,
   DOCTYPE,
+  CDATA,
 }
 
 lazy_static! {
@@ -99,6 +100,7 @@ lazy_static! {
     let mut map = HashMap::new();
     map.insert(Comment, vec!['-', '-']);
     map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
+    map.insert(CDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
     map
   };
   static ref VOID_ELEMENTS: Vec<&'static str> = vec![
@@ -121,6 +123,7 @@ lazy_static! {
 pub enum NodeType {
   Comment,          // comment
   HTMLDOCTYPE,      // html doctype
+  XMLCDATA,         // XML CDATA, IN SVG OR MATHML
   Tag,              // the start tag\self-closing tag\autofix empty tag
   TagEnd,           // the end tag node
   Text,             // text node
@@ -140,7 +143,8 @@ pub enum CodeTypeIn {
   HTMLDOCTYPE,       // html doctype
   EscapeableRawText, // escapeable raw text, <title> and <textarea>
   HTMLScript,        // html script
-  HTMLStyle,         //html style
+  HTMLStyle,         // html style
+  CDATA,             // CDATA section
   TextNode,          // text node
 }
 
@@ -170,6 +174,10 @@ pub fn is_identity(chars: &Vec<char>) -> bool {
   } else {
     true
   }
+}
+
+fn is_attr_key(chars: &Vec<char>) -> bool {
+  true
 }
 
 fn get_content(content: &Option<Vec<char>>) -> String {
@@ -658,7 +666,7 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: Tag | HTMLDOCTYPE
  */
-fn parse_tag_and_doctype(doc: &mut Doc, c: char) -> HResult {
+fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   let mut is_self_closing = false;
   let mut tag_name: String = String::from("");
@@ -709,10 +717,7 @@ fn parse_tag_and_doctype(doc: &mut Doc, c: char) -> HResult {
                   } else {
                     if !doc.parse_options.allow_self_closing {
                       // sub element in Svg or MathML allow self-closing
-                      let is_in_xml_or_mathml = doc.in_special.map_or(false, |(special, _)| {
-                        special == SpecialTag::Svg || special == SpecialTag::MathML
-                      });
-                      if !is_in_xml_or_mathml {
+                      if !doc.is_in_svg_or_mathml() {
                         return Err(ParseError::new(
                           ErrorKind::WrongCaseSensitive(meta.name.clone()),
                           doc.position,
@@ -815,13 +820,20 @@ fn parse_tag_and_doctype(doc: &mut Doc, c: char) -> HResult {
               // if end of the key or value
               let cur_attr = meta.attrs.last_mut().expect("the attr must have");
               let value = doc.chars_to_string();
-              let attr_data = doc.make_attr_data(value);
-              doc.prev_chars.clear();
               if tag_in_key {
+                if !is_attr_key(&doc.prev_chars) {
+                  return Err(ParseError::new(
+                    ErrorKind::CommonError(format!("wrong attribute key '{:?}'", value)),
+                    doc.position,
+                  ));
+                }
+                let attr_data = doc.make_attr_data(value);
                 cur_attr.key = Some(attr_data);
               } else {
+                let attr_data = doc.make_attr_data(value);
                 cur_attr.value = Some(attr_data);
               };
+              doc.prev_chars.clear();
               meta.tag_in = Wait;
             }
           }
@@ -1122,17 +1134,17 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 }
 
 /**
- * code_in: Comment
+ * code_in: Comment|CDATA
  */
-fn parse_comment(doc: &mut Doc, c: char) -> HResult {
+fn parse_comment_or_cdata(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   // comment node
-  const END_SYMBOL: char = '-';
-  if c == TAG_END_CHAR && doc.prev_char == END_SYMBOL && doc.prev_chars.len() >= 2 {
+  let end_symbol: char = if doc.code_in == Comment { '-' } else { ']' };
+  if c == TAG_END_CHAR && doc.prev_char == end_symbol && doc.prev_chars.len() >= 2 {
     let total_len = doc.prev_chars.len();
     let last_index = total_len - 2;
     let prev_last_char = doc.prev_chars[last_index];
-    if prev_last_char == END_SYMBOL {
+    if prev_last_char == end_symbol {
       let mut content = doc.clean_chars_return();
       content.truncate(last_index);
       doc.current_node.borrow_mut().content = Some(content);
@@ -1191,7 +1203,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
  */
 fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
-  // maybe Comment | DOCTYPE<HTML>
+  // maybe Comment | DOCTYPE<HTML> | CDATA
   let mut ignore_char = false;
   if let Some(next_chars) = &doc.detect {
     let total_len = doc.prev_chars.len();
@@ -1222,6 +1234,15 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
               ))));
               doc.set_text_spaces_between();
             }
+            'A' => {
+              doc.set_code_in(CDATA);
+              // new html doctype node
+              doc.add_new_node(Rc::new(RefCell::new(Node::new(
+                NodeType::XMLCDATA,
+                begin_at,
+              ))));
+              doc.set_text_spaces_between();
+            }
             _ => unreachable!(),
           };
           doc.detect = None;
@@ -1235,11 +1256,21 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
     }
   } else {
     match c {
-      '-' | 'D' | 'd' => {
-        let detect_type = if c == '-' {
-          DetectChar::Comment
+      '-' | 'D' | 'd' | '[' => {
+        let detect_type: DetectChar;
+        if c == '-' {
+          detect_type = DetectChar::Comment;
+        } else if c == '[' {
+          detect_type = DetectChar::CDATA;
+          // CDATA
+          if !doc.is_in_svg_or_mathml() {
+            return Err(ParseError::new(
+              ErrorKind::CommonError("<![CDATA tag".into()),
+              doc.position,
+            ));
+          }
         } else {
-          DetectChar::DOCTYPE
+          detect_type = DetectChar::DOCTYPE;
         };
         doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
       }
@@ -1383,7 +1414,7 @@ impl Doc {
         self.handle = parse_wait_and_text;
       }
       Tag | HTMLDOCTYPE => {
-        self.handle = parse_tag_and_doctype;
+        self.handle = parse_tag_or_doctype;
       }
       HTMLScript | HTMLStyle | EscapeableRawText => {
         self.handle = parse_special_tag;
@@ -1391,8 +1422,8 @@ impl Doc {
       TagEnd => {
         self.handle = parse_tagend;
       }
-      Comment => {
-        self.handle = parse_comment;
+      Comment | CDATA => {
+        self.handle = parse_comment_or_cdata;
       }
       UnkownTag => {
         self.handle = parse_unkown_tag;
@@ -1544,6 +1575,12 @@ impl Doc {
       // clear childs
       tag_node.childs = None;
     }
+  }
+  // is in svg or mathml
+  fn is_in_svg_or_mathml(&self) -> bool {
+    self.in_special.map_or(false, |(special, _)| {
+      special == SpecialTag::Svg || special == SpecialTag::MathML
+    })
   }
   // end of the doc
   fn eof(&mut self) -> Result<(), Box<dyn Error>> {

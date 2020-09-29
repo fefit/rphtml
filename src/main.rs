@@ -26,11 +26,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"<div></div><p></p>"##;
+  let code = r##"<div id"1"></div>"##;
   let doc = Doc::parse(
     code,
     ParseOptions {
-      allow_fix_unclose: true,
       ..Default::default()
     },
   )?;
