@@ -11,6 +11,7 @@ const ast = rphtml.parse(htmlCode, {
   case_sensitive_tagname: false,
 });
 const tree = ast.toJson();
+console.log(tree);
 console.dir(JSON.stringify(tree, null, 4));
 const doneCode = ast.render({
   always_close_void: false,

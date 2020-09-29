@@ -1,8 +1,7 @@
 use crate::config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
-use crate::parser::{CodePosAt, Doc, Node, NodeType, RefNode, SpecialTag, TagMeta};
+use crate::parser::{Doc, RefNode};
 use serde::{Deserialize, Serialize};
 use serde_json;
-use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
@@ -21,6 +20,7 @@ export type IJsNodeTree = {
   end_at: CodePosAt;
   end_tag?: IJsNodeTree;
   meta?: IJsNodeTagMeta;
+  childs?: Array<IJsNodeTree>;
 };
 "#;
 
@@ -68,7 +68,7 @@ extern "C" {
 }
 
 // create an instance
-fn create_instance() -> Doc<'static> {
+fn create_instance() -> Doc {
   Doc::new()
 }
 
@@ -80,7 +80,7 @@ pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode,
     .parse(content, options.into())
     .map_err(|e| JsValue::from_str(&e.to_string()))?;
   doc.into_json();
-  let result = doc.root.borrow_mut().clone().into();
+  let result = IJsNode::from(doc.root).into();
   Ok(result)
 }
 
@@ -88,39 +88,7 @@ pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode,
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IJsNode {
   #[wasm_bindgen(skip)]
-  pub tag_index: usize,
-
-  #[wasm_bindgen(skip)]
-  pub depth: usize,
-
-  #[wasm_bindgen(skip)]
-  pub node_type: NodeType,
-
-  #[wasm_bindgen(skip)]
-  pub begin_at: CodePosAt,
-
-  #[wasm_bindgen(skip)]
-  pub end_at: CodePosAt,
-
-  #[wasm_bindgen(skip)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub end_tag: Option<RefCell<Box<IJsNode>>>,
-
-  #[wasm_bindgen(skip)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub content: Option<Vec<char>>,
-
-  #[wasm_bindgen(skip)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub childs: Option<Vec<RefCell<Box<IJsNode>>>>,
-
-  #[wasm_bindgen(skip)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub meta: Option<RefCell<TagMeta>>,
-
-  #[wasm_bindgen(skip)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub special: Option<SpecialTag>,
+  pub root: RefNode,
 }
 
 #[wasm_bindgen]
@@ -128,104 +96,34 @@ impl IJsNode {
   /* methods */
   #[wasm_bindgen(js_name = toJson)]
   pub fn to_json(&self) -> Result<IJsNodeTree, JsValue> {
-    let result = JsValue::from_serde(self).map_err(|e| JsValue::from(&e.to_string()))?;
+    let result = JsValue::from_serde(&self.root).map_err(|e| JsValue::from(&e.to_string()))?;
     Ok(result.into())
   }
 
   #[wasm_bindgen(js_name = toString)]
   pub fn to_string(&self) -> Result<IJsString, JsValue> {
-    let result = serde_json::to_string(self).map_err(|e| JsValue::from(&e.to_string()))?;
+    let result = serde_json::to_string(&self.root).map_err(|e| JsValue::from(&e.to_string()))?;
     Ok(JsValue::from_str(&result).into())
   }
 
   #[wasm_bindgen]
   pub fn render(&self, options: Option<IJsRenderOptions>) -> Result<IJsString, JsValue> {
-    let root: Node = self.clone().into();
     let options: JsRenderOptions = options.map_or(Default::default(), |options| options.into());
-    let result = Doc::render_js_tree(Rc::new(RefCell::new(root)), &options.into());
+    let result = Doc::render_js_tree(Rc::clone(&self.root), &options.into());
     Ok(JsValue::from_str(result.as_str()).into())
   }
 }
 
-impl<'a> From<IJsNode> for Node<'a> {
+impl From<IJsNode> for RefNode {
   fn from(node: IJsNode) -> Self {
-    let IJsNode {
-      tag_index,
-      depth,
-      node_type,
-      begin_at,
-      end_at,
-      end_tag,
-      content,
-      childs,
-      meta,
-      special,
-    } = node;
-    let end_tag = end_tag.map(|tag| {
-      let tag = tag.into_inner();
-      let last_tag = Node::from(*tag);
-      Rc::new(RefCell::new(last_tag))
-    });
-    let childs: Option<Vec<RefNode<'_>>> = childs.map(|child| {
-      child
-        .into_iter()
-        .map(|tag| {
-          let tag = tag.into_inner();
-          Rc::new(RefCell::new(Node::from(*tag)))
-        })
-        .collect()
-    });
-    Node {
-      tag_index,
-      depth,
-      node_type,
-      begin_at,
-      end_at,
-      content,
-      meta,
-      special,
-      parent: None,
-      end_tag,
-      childs,
-    }
+    node.root
   }
 }
 
-impl<'a> From<Node<'a>> for IJsNode {
-  fn from(node: Node<'a>) -> Self {
-    let Node {
-      tag_index,
-      depth,
-      node_type,
-      begin_at,
-      end_at,
-      end_tag,
-      content,
-      childs,
-      meta,
-      special,
-      ..
-    } = node;
-    let end_tag = end_tag
-      .as_ref()
-      .map(|v| RefCell::new(Box::new(v.borrow_mut().clone().into())));
-    let childs = childs.as_ref().map(|childs| {
-      childs
-        .into_iter()
-        .map(|v| RefCell::new(Box::new(v.borrow_mut().clone().into())))
-        .collect()
-    });
+impl From<RefNode> for IJsNode {
+  fn from(node: RefNode) -> Self {
     IJsNode {
-      tag_index,
-      depth,
-      node_type,
-      begin_at,
-      end_at,
-      end_tag,
-      childs,
-      meta,
-      special,
-      content,
+      root: Rc::clone(&node),
     }
   }
 }

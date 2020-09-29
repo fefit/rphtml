@@ -117,7 +117,7 @@ lazy_static! {
 }
 
 #[wasm_bindgen]
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum NodeType {
   Comment,          // comment
   HTMLDOCTYPE,      // html doctype
@@ -128,7 +128,7 @@ pub enum NodeType {
   AbstractRoot,     // abstract root node
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CodeTypeIn {
   AbstractRoot,      // abstract root node,the begin node of document
   Unkown,            // wait for detect node
@@ -183,7 +183,7 @@ fn get_content(content: &Option<Vec<char>>) -> String {
  * the doc's position
 */
 #[wasm_bindgen]
-#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CodePosAt {
   pub line_no: u32,
   pub col_no: u32,
@@ -240,7 +240,7 @@ impl CodePosAt {
  * if key is None,it's a value with quote
  */
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Attr {
   pub key: Option<AttrData>,
   pub value: Option<AttrData>,
@@ -248,7 +248,7 @@ pub struct Attr {
   pub need_quote: bool,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AttrData {
   pub content: String,
   pub begin_at: CodePosAt,
@@ -291,18 +291,17 @@ impl Attr {
  * name: the tag name
  * attrs: the attribute list
 */
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TagMeta {
   #[serde(skip)]
   prev_is_key: bool,
 
   #[serde(skip)]
   is_in_kv: bool,
-
   #[serde(skip)]
   is_in_translate: bool,
 
+  #[serde(skip)]
   tag_in: TagCodeIn,
 
   #[serde(skip)]
@@ -335,7 +334,7 @@ impl TagMeta {
   }
 }
 
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub enum TagCodeIn {
   Wait,
   Key,
@@ -344,13 +343,19 @@ pub enum TagCodeIn {
   SingleQuotedValue,
 }
 
-pub type RefNode<'a> = Rc<RefCell<Node<'a>>>;
+impl Default for TagCodeIn {
+  fn default() -> Self {
+    Self::Wait
+  }
+}
+
+pub type RefNode = Rc<RefCell<Node>>;
 
 /**
  *
  */
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node<'a> {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Node {
   // if a tag node, add a index to the node
   pub tag_index: usize,
 
@@ -368,11 +373,11 @@ pub struct Node<'a> {
 
   // the end tag </xx> of the tag node
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub end_tag: Option<RefNode<'a>>,
+  pub end_tag: Option<RefNode>,
 
   // parent node, use weak reference,prevent reference loop
   #[serde(skip_serializing)]
-  pub parent: Option<Weak<RefCell<Node<'a>>>>,
+  pub parent: Option<Weak<RefCell<Node>>>,
 
   // the content,for text/comment/style/script nodes
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -380,17 +385,18 @@ pub struct Node<'a> {
 
   // the child nodes
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub childs: Option<Vec<RefNode<'a>>>,
+  pub childs: Option<Vec<RefNode>>,
 
   // the tag node meta information
   #[serde(skip_serializing_if = "Option::is_none")]
   pub meta: Option<RefCell<TagMeta>>,
+
   // special information
   #[serde(skip_serializing_if = "Option::is_none")]
   pub special: Option<SpecialTag>,
 }
 
-impl<'a> Node<'a> {
+impl Node {
   // create a new node
   pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
     return Node {
@@ -532,7 +538,7 @@ impl<'a> Node<'a> {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize, Hash, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq)]
 pub enum SpecialTag {
   Pre,
   MathML,
@@ -586,19 +592,19 @@ impl SpecialTag {
 }
 
 type HResult = Result<(), Box<dyn Error>>;
-type NextHandle<'a> = fn(&mut Doc<'a>, char) -> HResult;
+type NextHandle = fn(&mut Doc, char) -> HResult;
 
 /*
 * no operation, just placeholder for initialize doc
 */
-fn noop<'a>(_d: &mut Doc, _c: char) -> HResult {
+fn noop(_d: &mut Doc, _c: char) -> HResult {
   Ok(())
 }
 
 /*
  * code_in: TextNode | Unkown | AbstractRoot
 */
-fn parse_wait_and_text<'a>(doc: &mut Doc<'a>, c: char) -> HResult {
+fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   match c {
     // match the tag start '<'
@@ -645,7 +651,7 @@ fn parse_wait_and_text<'a>(doc: &mut Doc<'a>, c: char) -> HResult {
 /**
  * code_in: Tag | HTMLDOCTYPE
  */
-fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
+fn parse_tag_and_doctype(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   let mut is_self_closing = false;
   let mut tag_name: String = String::from("");
@@ -944,7 +950,7 @@ fn parse_tag_and_doctype<'a>(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: TagEnd
  */
-fn parse_tagend<'a>(doc: &mut Doc<'a>, c: char) -> HResult {
+fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   // the end tag
   if c == TAG_END_CHAR {
@@ -958,8 +964,8 @@ fn parse_tagend<'a>(doc: &mut Doc<'a>, c: char) -> HResult {
       0
     };
     let is_allow_fix = max_back_num > 0;
-    let mut empty_closed_tags: Vec<RefNode<'a>> = vec![];
-    let mut real_tag_node: Option<RefNode<'a>> = None;
+    let mut empty_closed_tags: Vec<RefNode> = vec![];
+    let mut real_tag_node: Option<RefNode> = None;
     while let Some(node) = iter.next() {
       if let Some(meta) = &node.borrow().meta {
         let tag_name = &meta.borrow().name;
@@ -1052,7 +1058,7 @@ fn parse_tagend<'a>(doc: &mut Doc<'a>, c: char) -> HResult {
 /**
  * code_in: HTMLScript | HTMLStyle | EscapeableRawText
  */
-fn parse_special_tag<'a>(doc: &mut Doc, c: char) -> HResult {
+fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   let end_tag = doc
     .detect
@@ -1127,7 +1133,7 @@ fn parse_special_tag<'a>(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: Comment
  */
-fn parse_comment<'a>(doc: &mut Doc, c: char) -> HResult {
+fn parse_comment(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   // comment node
   const END_SYMBOL: char = '-';
@@ -1153,7 +1159,7 @@ fn parse_comment<'a>(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: UnkownTag
  */
-fn parse_unkown_tag<'a>(doc: &mut Doc, c: char) -> HResult {
+fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   // check the tag type
   match c {
@@ -1192,7 +1198,7 @@ fn parse_unkown_tag<'a>(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: ExclamationBegin
  */
-fn parse_exclamation_begin<'a>(doc: &mut Doc, c: char) -> HResult {
+fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
   // maybe Comment | DOCTYPE<HTML>
   let mut ignore_char = false;
@@ -1264,27 +1270,27 @@ fn parse_exclamation_begin<'a>(doc: &mut Doc, c: char) -> HResult {
  * Doc
  * the html syntax: https://www.w3.org/TR/2011/WD-html-markup-20110113/syntax.html
 */
-pub struct Doc<'a> {
+pub struct Doc {
   code_in: CodeTypeIn,
   position: CodePosAt,
   mem_position: CodePosAt,
   detect: Option<Vec<char>>,
   prev_chars: Vec<char>,
   prev_char: char,
-  chain_nodes: Vec<RefNode<'a>>,
-  current_node: RefNode<'a>,
+  chain_nodes: Vec<RefNode>,
+  current_node: RefNode,
   tag_index: usize,
   in_special: Option<(SpecialTag, &'static str)>,
   repeat_whitespace: bool,
-  check_textnode: Option<RefNode<'a>>,
-  handle: NextHandle<'a>,
+  check_textnode: Option<RefNode>,
+  handle: NextHandle,
   pub total_chars: usize,
   pub parse_options: ParseOptions,
-  pub nodes: Vec<RefNode<'a>>,
-  pub root: RefNode<'a>,
+  pub nodes: Vec<RefNode>,
+  pub root: RefNode,
 }
 
-impl<'a> Doc<'a> {
+impl Doc {
   // create new parser
   pub fn new() -> Self {
     let node = Rc::new(RefCell::new(Node::new(
@@ -1333,11 +1339,7 @@ impl<'a> Doc<'a> {
     }
   }
   // parse with string
-  pub fn parse(
-    &mut self,
-    content: &str,
-    options: ParseOptions,
-  ) -> Result<RefNode<'a>, Box<dyn Error>> {
+  pub fn parse(&mut self, content: &str, options: ParseOptions) -> Result<RefNode, Box<dyn Error>> {
     self.parse_options = options;
     for c in content.chars() {
       self.next(c)?;
@@ -1351,7 +1353,7 @@ impl<'a> Doc<'a> {
     &mut self,
     filename: P,
     options: ParseOptions,
-  ) -> Result<RefNode<'a>, Box<dyn Error>>
+  ) -> Result<RefNode, Box<dyn Error>>
   where
     P: AsRef<Path>,
   {
@@ -1452,7 +1454,7 @@ impl<'a> Doc<'a> {
     Ok(())
   }
   // add a new node to the queue
-  fn add_new_node(&mut self, node: RefNode<'a>) {
+  fn add_new_node(&mut self, node: RefNode) {
     use NodeType::*;
     let node_type = node.borrow().node_type;
     if node_type != TagEnd {
@@ -1566,7 +1568,7 @@ impl<'a> Doc<'a> {
     self.root.borrow_mut().build(options)
   }
   // render for js
-  pub fn render_js_tree(tree: RefNode<'_>, options: &RenderOptions) -> String {
+  pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {
     tree.borrow().build(options)
   }
 }
