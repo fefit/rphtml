@@ -1,6 +1,6 @@
 [package]
 name = "rphtml"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
@@ -9,7 +9,6 @@ repository = "https://github.com/fefit/rphtml"
 keywords = ["html", "parser", "html parser", "html minify", "html render"]
 categories = ["parser-implementations", "wasm"]
 readme = "README.md"
-license-file = "LICENSE"
 
 [dependencies]
 lazy_static = "1.4.0"

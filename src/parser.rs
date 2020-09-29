@@ -591,7 +591,7 @@ impl SpecialTag {
   }
 }
 
-type HResult = Result<(), Box<dyn Error>>;
+pub type HResult = Result<(), Box<dyn Error>>;
 type NextHandle = fn(&mut Doc, char) -> HResult;
 
 /*
@@ -1066,11 +1066,11 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
     .expect("detect chars must set before set_code_in.");
   let total_len = end_tag.len();
   let mut chars_len = doc.prev_chars.len();
+  let mut is_matched = false;
   // parse html script tag and style tag
   match c {
     TAG_BEGIN_CHAR => {
       doc.mem_position = doc.position;
-      doc.prev_chars.push(c);
     }
     TAG_END_CHAR
       if (chars_len == total_len && !doc.prev_char.is_ascii_whitespace())
@@ -1099,6 +1099,7 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         }
       }
       if matched_num == total_len {
+        is_matched = true;
         // set code in unkown
         doc.set_code_in(Unkown);
         // set end
@@ -1123,9 +1124,10 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         doc.detect = None;
       }
     }
-    _ => {
-      doc.prev_chars.push(c);
-    }
+    _ => {}
+  }
+  if !is_matched {
+    doc.prev_chars.push(c);
   }
   Ok(())
 }
@@ -1292,7 +1294,7 @@ pub struct Doc {
 
 impl Doc {
   // create new parser
-  pub fn new() -> Self {
+  fn new() -> Self {
     let node = Rc::new(RefCell::new(Node::new(
       NodeType::AbstractRoot,
       CodePosAt::begin(),
@@ -1339,21 +1341,18 @@ impl Doc {
     }
   }
   // parse with string
-  pub fn parse(&mut self, content: &str, options: ParseOptions) -> Result<RefNode, Box<dyn Error>> {
-    self.parse_options = options;
+  pub fn parse(content: &str, options: ParseOptions) -> Result<Self, Box<dyn Error>> {
+    let mut doc = Doc::new();
+    doc.parse_options = options;
     for c in content.chars() {
-      self.next(c)?;
+      doc.next(c)?;
     }
-    self.eof()?;
-    Ok(Rc::clone(&self.root))
+    doc.eof()?;
+    Ok(doc)
   }
 
   // parse file
-  pub fn parse_file<P>(
-    &mut self,
-    filename: P,
-    options: ParseOptions,
-  ) -> Result<RefNode, Box<dyn Error>>
+  pub fn parse_file<P>(filename: P, options: ParseOptions) -> Result<Self, Box<dyn Error>>
   where
     P: AsRef<Path>,
   {
@@ -1365,15 +1364,16 @@ impl Doc {
     };
     let file = File::open(file_path)?;
     let file = BufReader::new(file);
-    self.parse_options = options;
+    let mut doc = Doc::new();
+    doc.parse_options = options;
     for line in file.lines() {
       for c in line.unwrap().chars() {
-        self.next(c)?;
+        doc.next(c)?;
       }
-      self.next('\n')?;
+      doc.next('\n')?;
     }
-    self.eof()?;
-    Ok(Rc::clone(&self.root))
+    doc.eof()?;
+    Ok(doc)
   }
   // gather previous characters
   fn chars_to_string(&self) -> String {

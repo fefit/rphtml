@@ -67,18 +67,11 @@ extern "C" {
   pub type IJsNodeAttrData;
 }
 
-// create an instance
-fn create_instance() -> Doc {
-  Doc::new()
-}
-
 #[wasm_bindgen(catch)]
 pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode, JsValue> {
-  let mut doc = create_instance();
   let options: JsParseOptions = options.map_or(Default::default(), |options| options.into());
-  doc
-    .parse(content, options.into())
-    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+  let mut doc =
+    Doc::parse(content, options.into()).map_err(|e| JsValue::from_str(&e.to_string()))?;
   doc.into_json();
   let result = IJsNode::from(doc.root).into();
   Ok(result)
