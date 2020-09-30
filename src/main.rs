@@ -26,15 +26,26 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"<div id"1"></div>"##;
+  let code = r##"
+  <!---
+  // this is a comment
+  // --allowed
+  --->
+  "##;
   let doc = Doc::parse(
     code,
     ParseOptions {
       ..Default::default()
     },
   )?;
-  let render_code = doc.render(&Default::default());
+  let render_code = doc.render(&RenderOptions {
+    minify_spaces: true,
+    remove_comment: true,
+    ..Default::default()
+  });
   println!("cur result is {:?}, {}", doc.root, doc.total_chars);
-  println!("render ===> {:?}, {:?}", render_code, render_code == code);
+  println!("{:?}", code);
+  println!("{:?}", render_code);
+  println!("{:?}", render_code == code);
   Ok(())
 }

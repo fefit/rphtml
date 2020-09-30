@@ -91,7 +91,7 @@ pub enum ErrorKind {
 pub enum DetectChar {
   Comment,
   DOCTYPE,
-  CDATA,
+  XMLCDATA,
 }
 
 lazy_static! {
@@ -100,7 +100,7 @@ lazy_static! {
     let mut map = HashMap::new();
     map.insert(Comment, vec!['-', '-']);
     map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
-    map.insert(CDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
+    map.insert(XMLCDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
     map
   };
   static ref VOID_ELEMENTS: Vec<&'static str> = vec![
@@ -144,7 +144,7 @@ pub enum CodeTypeIn {
   EscapeableRawText, // escapeable raw text, <title> and <textarea>
   HTMLScript,        // html script
   HTMLStyle,         // html style
-  CDATA,             // CDATA section
+  XMLCDATA,          // XMLCDATA section
   TextNode,          // text node
 }
 
@@ -512,14 +512,19 @@ impl Node {
         );
         result.push_str(content.as_str());
       }
-      Comment if !options.remove_comment => {
-        // comment
-        let comment = format!("<!--{}-->", get_content(&self.content));
-        result.push_str(comment.as_str());
+      Comment => {
+        if !options.remove_comment {
+          // comment
+          let comment = format!("<!--{}-->", get_content(&self.content));
+          result.push_str(comment.as_str());
+        }
       }
-      _ => {
-        // otherwise, render nothing
+      XMLCDATA => {
+        // cdata
+        let content = format!("<![CDATA[{}]]>", get_content(&self.content));
+        result.push_str(content.as_str());
       }
+      _ => {}
     }
     (result, is_in_pre)
   }
@@ -589,7 +594,7 @@ impl SpecialTag {
       }
       Svg | MathML => {
         match code_in {
-          Tag => {}
+          Tag | XMLCDATA => {}
           TextNode if c.is_ascii_whitespace() => {}
           _ => {
             let message = format!(
@@ -1203,7 +1208,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
  */
 fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
   use CodeTypeIn::*;
-  // maybe Comment | DOCTYPE<HTML> | CDATA
+  // maybe Comment | DOCTYPE<HTML> | XMLCDATA
   let mut ignore_char = false;
   if let Some(next_chars) = &doc.detect {
     let total_len = doc.prev_chars.len();
@@ -1214,15 +1219,23 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
         if total_len == actual_len - 1 {
           let begin_at = doc.mem_position;
           match c {
-            '-' => {
-              doc.set_code_in(Comment);
+            '-' | '[' => {
+              let code_in: CodeTypeIn;
+              let node_type: NodeType;
+              if c == '-' {
+                code_in = Comment;
+                // new comment node
+                node_type = NodeType::Comment;
+              } else {
+                code_in = XMLCDATA;
+                // new html doctype node
+                node_type = NodeType::XMLCDATA;
+              }
+              doc.set_code_in(code_in);
+              // new comment node
+              doc.add_new_node(Rc::new(RefCell::new(Node::new(node_type, begin_at))));
               doc.prev_chars.clear();
               ignore_char = true;
-              // new comment node
-              doc.add_new_node(Rc::new(RefCell::new(Node::new(
-                NodeType::Comment,
-                begin_at,
-              ))));
               doc.set_text_spaces_between();
             }
             'E' | 'e' => {
@@ -1230,15 +1243,6 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
               // new html doctype node
               doc.add_new_node(Rc::new(RefCell::new(Node::new(
                 NodeType::HTMLDOCTYPE,
-                begin_at,
-              ))));
-              doc.set_text_spaces_between();
-            }
-            'A' => {
-              doc.set_code_in(CDATA);
-              // new html doctype node
-              doc.add_new_node(Rc::new(RefCell::new(Node::new(
-                NodeType::XMLCDATA,
                 begin_at,
               ))));
               doc.set_text_spaces_between();
@@ -1261,11 +1265,32 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
         if c == '-' {
           detect_type = DetectChar::Comment;
         } else if c == '[' {
-          detect_type = DetectChar::CDATA;
           // CDATA
-          if !doc.is_in_svg_or_mathml() {
+          let special_tag_name = doc.in_special.map(|(_, name)| name);
+          if special_tag_name.is_some() {
+            if special_tag_name.unwrap()
+              == doc
+                .chain_nodes
+                .last()
+                .unwrap()
+                .borrow()
+                .meta
+                .as_ref()
+                .expect("chain nodes must tag node")
+                .borrow()
+                .name
+                .as_str()
+            {
+              return Err(ParseError::new(
+                ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
+                doc.position,
+              ));
+            } else {
+              detect_type = DetectChar::XMLCDATA;
+            }
+          } else {
             return Err(ParseError::new(
-              ErrorKind::CommonError("<![CDATA tag".into()),
+              ErrorKind::CommonError("wrong <![CDATA tag can only used in Svg or MathML".into()),
               doc.position,
             ));
           }
@@ -1422,7 +1447,7 @@ impl Doc {
       TagEnd => {
         self.handle = parse_tagend;
       }
-      Comment | CDATA => {
+      Comment | XMLCDATA => {
         self.handle = parse_comment_or_cdata;
       }
       UnkownTag => {

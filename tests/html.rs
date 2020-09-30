@@ -227,7 +227,7 @@ fn test_end_spaces() -> HResult {
 
 #[test]
 fn test_svg_tag() -> HResult {
-  let code = r#"<svg version="1.1" baseProfile="full" width="300" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="red" /></svg>"#;
+  let code = r#"<svg version="1.1" baseProfile="full" width="300" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="red" /><text x="250" y="150" font-family="Verdana" font-size="55"><![CDATA[<div> is something]]></text></svg>"#;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
   Ok(())
