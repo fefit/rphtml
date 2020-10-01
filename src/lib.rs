@@ -1,3 +1,3 @@
 pub mod config;
 pub mod parser;
-pub mod wasm;
+pub mod util;pub mod wasm;

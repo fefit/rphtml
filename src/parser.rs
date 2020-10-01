@@ -1,4 +1,5 @@
 use crate::config::{ParseOptions, RenderOptions};
+use crate::util::{is_identity, is_key_available_char, is_value_available_char};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -146,38 +147,6 @@ pub enum CodeTypeIn {
   HTMLStyle,         // html style
   XMLCDATA,          // XMLCDATA section
   TextNode,          // text node
-}
-
-pub fn is_identity(chars: &Vec<char>) -> bool {
-  let mut is_first = true;
-  let mut has_ns = false;
-  for &c in chars {
-    if is_first {
-      if !(c.is_ascii_alphanumeric() || c == '_') {
-        return false;
-      }
-      is_first = false;
-      continue;
-    }
-    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-      continue;
-    }
-    if !has_ns && (c == '.' || c == ':') {
-      has_ns = true;
-      is_first = true;
-      continue;
-    }
-    return false;
-  }
-  if is_first {
-    false
-  } else {
-    true
-  }
-}
-
-fn is_attr_key(chars: &Vec<char>) -> bool {
-  true
 }
 
 fn get_content(content: &Option<Vec<char>>) -> String {
@@ -816,6 +785,23 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                       meta.attrs.push(Default::default());
                     }
                     doc.mem_position = doc.position;
+                  } else {
+                    // check if key or value is ok
+                    if tag_in_key {
+                      if !is_key_available_char(&c) {
+                        return Err(ParseError::new(
+                          ErrorKind::CommonError("wrong key character".into()),
+                          doc.position,
+                        ));
+                      }
+                    } else {
+                      if !is_value_available_char(&c) {
+                        return Err(ParseError::new(
+                          ErrorKind::CommonError("wrong value character".into()),
+                          doc.position,
+                        ));
+                      }
+                    }
                   }
                   doc.prev_chars.push(c);
                 }
@@ -826,12 +812,6 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               let cur_attr = meta.attrs.last_mut().expect("the attr must have");
               let value = doc.chars_to_string();
               if tag_in_key {
-                if !is_attr_key(&doc.prev_chars) {
-                  return Err(ParseError::new(
-                    ErrorKind::CommonError(format!("wrong attribute key '{:?}'", value)),
-                    doc.position,
-                  ));
-                }
                 let attr_data = doc.make_attr_data(value);
                 cur_attr.key = Some(attr_data);
               } else {
@@ -1259,45 +1239,44 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
       }
     }
   } else {
+    let detect_type: DetectChar;
     match c {
-      '-' | 'D' | 'd' | '[' => {
-        let detect_type: DetectChar;
-        if c == '-' {
-          detect_type = DetectChar::Comment;
-        } else if c == '[' {
-          // CDATA
-          let special_tag_name = doc.in_special.map(|(_, name)| name);
-          if special_tag_name.is_some() {
-            if special_tag_name.unwrap()
-              == doc
-                .chain_nodes
-                .last()
-                .unwrap()
-                .borrow()
-                .meta
-                .as_ref()
-                .expect("chain nodes must tag node")
-                .borrow()
-                .name
-                .as_str()
-            {
-              return Err(ParseError::new(
-                ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
-                doc.position,
-              ));
-            } else {
-              detect_type = DetectChar::XMLCDATA;
-            }
-          } else {
+      '-' => {
+        detect_type = DetectChar::Comment;
+      }
+      'D' | 'd' => {
+        detect_type = DetectChar::DOCTYPE;
+      }
+      '[' => {
+        // CDATA
+        let special_tag_name = doc.in_special.map(|(_, name)| name);
+        if special_tag_name.is_some() {
+          if special_tag_name.unwrap()
+            == doc
+              .chain_nodes
+              .last()
+              .unwrap()
+              .borrow()
+              .meta
+              .as_ref()
+              .expect("chain nodes must tag node")
+              .borrow()
+              .name
+              .as_str()
+          {
             return Err(ParseError::new(
-              ErrorKind::CommonError("wrong <![CDATA tag can only used in Svg or MathML".into()),
+              ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
               doc.position,
             ));
+          } else {
+            detect_type = DetectChar::XMLCDATA;
           }
         } else {
-          detect_type = DetectChar::DOCTYPE;
-        };
-        doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
+          return Err(ParseError::new(
+            ErrorKind::CommonError("wrong <![CDATA tag can only used in Svg or MathML".into()),
+            doc.position,
+          ));
+        }
       }
       _ => {
         return Err(ParseError::new(
@@ -1306,6 +1285,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
         ));
       }
     };
+    doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
   }
   if !ignore_char {
     doc.prev_chars.push(c);

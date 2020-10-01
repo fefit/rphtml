@@ -162,8 +162,8 @@ fn test_attrs() -> HResult {
     childs
   });
   // wrong value
-  // assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
-  // assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
+  assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
+  assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
   Ok(())
 }
 
