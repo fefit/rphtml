@@ -551,7 +551,7 @@ impl SpecialTag {
       }
       _ => {}
     };
-    match &self {
+    match self {
       Pre => {
         let message = format!(
           "the tag '{}' can only contains text node, wrong '{:?}' at {:?}",
@@ -564,6 +564,7 @@ impl SpecialTag {
       Svg | MathML => {
         match code_in {
           Tag | XMLCDATA => {}
+          HTMLScript | HTMLStyle if self == &Svg => {}
           TextNode if c.is_ascii_whitespace() => {}
           _ => {
             let message = format!(
@@ -691,11 +692,16 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                   } else {
                     if !doc.parse_options.allow_self_closing {
                       // sub element in Svg or MathML allow self-closing
-                      if !doc.is_in_svg_or_mathml() {
-                        return Err(ParseError::new(
-                          ErrorKind::WrongCaseSensitive(meta.name.clone()),
-                          doc.position,
-                        ));
+                      match doc.check_special() {
+                        Some(SpecialTag::Svg) | Some(SpecialTag::MathML) => {
+                          // is in svg or mathml
+                        }
+                        _ => {
+                          return Err(ParseError::new(
+                            ErrorKind::WrongSelfClosing(meta.name.clone()),
+                            doc.position,
+                          ));
+                        }
                       }
                     }
                     // not void element, but allow self-closing or in <svg/math>, pop from chain nodes
@@ -913,8 +919,11 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
   if is_node_end {
     doc.set_tag_end_info();
     if doc.code_in == Tag {
+      let is_in_svg = doc
+        .check_special()
+        .map_or(false, |special| special == SpecialTag::Svg);
       match tag_name.to_lowercase().as_str() {
-        name @ "script" | name @ "style" | name @ "title" | name @ "textarea" => {
+        name @ "script" | name @ "style" | name @ "title" | name @ "textarea" if !is_in_svg => {
           doc.mem_position = doc.position;
           let code_in = match name {
             "script" => HTMLScript,
@@ -1582,10 +1591,8 @@ impl Doc {
     }
   }
   // is in svg or mathml
-  fn is_in_svg_or_mathml(&self) -> bool {
-    self.in_special.map_or(false, |(special, _)| {
-      special == SpecialTag::Svg || special == SpecialTag::MathML
-    })
+  fn check_special(&self) -> Option<SpecialTag> {
+    self.in_special.map(|(special, _)| special)
   }
   // end of the doc
   fn eof(&mut self) -> Result<(), Box<dyn Error>> {

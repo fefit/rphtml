@@ -26,12 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"
-  <!---
-  // this is a comment
-  // --allowed
-  --->
-  "##;
+  let code = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript"/></svg>"#;
   let doc = Doc::parse(
     code,
     ParseOptions {
