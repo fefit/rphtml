@@ -246,7 +246,7 @@ fn test_tag_name() -> HResult {
   let code = r#"<Form><Form.Item></Form.Item></Form>"#;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
-  let code = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript"/></svg>"#;
+  let code = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript" /></svg>"#;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
   Ok(())

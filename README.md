@@ -3,7 +3,7 @@
 A html parser write in rust, build wasm code for npm package.
 
 [![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.org/fefit/rphtml)
-[![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg?token=aKBpMDSv2o)](undefined)
+[![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg)](https://codecov.io/gh/fefit/rphtml)
 
 # use in node
 
@@ -128,4 +128,4 @@ console.log(code);
   ```
 
 - ### `toString() : string`
-  return the string of the json data, like `JSON.stringify()`
+  return the string of the json data, like `JSON.stringify()`, you can use `JSON.parse()` in javascript to get the json data,is same as the `toJSON()`.

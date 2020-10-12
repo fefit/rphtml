@@ -1,5 +1,5 @@
 use crate::config::{ParseOptions, RenderOptions};
-use crate::util::{is_identity, is_key_available_char, is_value_available_char};
+use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -794,14 +794,14 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                   } else {
                     // check if key or value is ok
                     if tag_in_key {
-                      if !is_key_available_char(&c) {
+                      if !is_char_available_in_key(&c) {
                         return Err(ParseError::new(
                           ErrorKind::CommonError("wrong key character".into()),
                           doc.position,
                         ));
                       }
                     } else {
-                      if !is_value_available_char(&c) {
+                      if !is_char_available_in_value(&c) {
                         return Err(ParseError::new(
                           ErrorKind::CommonError("wrong value character".into()),
                           doc.position,
@@ -1656,4 +1656,5 @@ impl Doc {
   pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {
     tree.borrow().build(options)
   }
+  //
 }

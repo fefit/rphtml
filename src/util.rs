@@ -27,21 +27,6 @@ pub fn is_identity(chars: &Vec<char>) -> bool {
 }
 
 /**
- *
- * https://www.w3.org/TR/2012/WD-html-markup-20120329/syntax.html#syntax-attributes
- * https://html.spec.whatwg.org/multipage/syntax.html#attributes-2
-*/
-pub fn is_key_available_char(ch: &char) -> bool {
-  if ch.is_ascii_whitespace() || ch.is_ascii_control() || is_non_character(ch) {
-    return false;
-  }
-  match ch {
-    '\u{0000}' => false,
-    '"' | '\'' | '>' | '/' | '=' => false,
-    _ => true,
-  }
-}
-/**
  * non characters
  * https://infra.spec.whatwg.org/#noncharacter
 */
@@ -57,17 +42,24 @@ pub fn is_non_character(ch: &char) -> bool {
     _ => false,
   }
 }
-pub fn is_attr_key_ok(chars: &Vec<char>) -> bool {
-  for ch in chars {
-    if is_key_available_char(ch) {
-      continue;
-    }
+
+/**
+ *
+ * https://www.w3.org/TR/2012/WD-html-markup-20120329/syntax.html#syntax-attributes
+ * https://html.spec.whatwg.org/multipage/syntax.html#attributes-2
+*/
+pub fn is_char_available_in_key(ch: &char) -> bool {
+  if ch.is_ascii_whitespace() || ch.is_ascii_control() || is_non_character(ch) {
     return false;
   }
-  return true;
+  match ch {
+    '\u{0000}' => false,
+    '"' | '\'' | '>' | '/' | '=' => false,
+    _ => true,
+  }
 }
 
-pub fn is_value_available_char(ch: &char) -> bool {
+pub fn is_char_available_in_value(ch: &char) -> bool {
   if ch.is_ascii_whitespace() {
     return false;
   }
@@ -76,14 +68,4 @@ pub fn is_value_available_char(ch: &char) -> bool {
     '"' | '\'' | '<' | '>' | '/' | '=' | '`' => false,
     _ => true,
   }
-}
-
-pub fn is_attr_value_ok(chars: &Vec<char>) -> bool {
-  for ch in chars {
-    if is_value_available_char(ch) {
-      continue;
-    }
-    return false;
-  }
-  return true;
 }
