@@ -16,9 +16,10 @@ const IJS_NODE_TREE: &'static str = r#"
 export type IJsNodeTree = {
   uuid?: string;
   depth: number;
-  node_type: NodeType;
+  node_type: number;
   begin_at: CodePosAt;
   end_at: CodePosAt;
+  content?: Array<string>;
   end_tag?: IJsNodeTree;
   meta?: IJsNodeTagMeta;
   childs?: Array<IJsNodeTree>;

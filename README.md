@@ -36,7 +36,7 @@ console.log(jsonData);
 { tag_index: 0,
   depth: 0,
   node_type: 'AbstractRoot',
-  begin_at: { line_no: 1, col_no: 0, index: -1 },
+  begin_at: { line_no: 1, col_no: 0, index: 0 },
   end_at: { line_no: 6, col_no: 0, index: 72 },
   childs:
    [ { tag_index: 0,
@@ -120,6 +120,7 @@ console.log(code);
     node_type: NodeType;
     begin_at: CodePosAt;
     end_at: CodePosAt;
+    content?: Array<string>;
     end_tag?: IJsNodeTree; // the closed tag
     meta?: IJsNodeTagMeta; // tag meta information.
     childs?: Array<IJsNodeTree>; // the childs of the tag.
