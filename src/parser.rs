@@ -2,6 +2,7 @@ use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use serde_repr::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
@@ -120,17 +121,17 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
-#[wasm_bindgen]
-#[derive(PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
 pub enum NodeType {
-  Comment,          // comment
-  HTMLDOCTYPE,      // html doctype
-  XMLCDATA,         // XML CDATA, IN SVG OR MATHML
-  Tag,              // the start tag\self-closing tag\autofix empty tag
-  TagEnd,           // the end tag node
-  Text,             // text node
-  SpacesBetweenTag, // spaces between tag
-  AbstractRoot,     // abstract root node
+  AbstractRoot = 0,     // abstract root node
+  HTMLDOCTYPE = 1,      // html doctype
+  Comment = 2,          // comment
+  Text = 3,             // text node
+  SpacesBetweenTag = 4, // spaces between tag
+  Tag = 5,              // the start tag\self-closing tag\autofix empty tag
+  TagEnd = 6,           // the end tag node
+  XMLCDATA = 7,         // XML CDATA, IN SVG OR MATHML
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
