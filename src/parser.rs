@@ -121,6 +121,7 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
+#[wasm_bindgen]
 #[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum NodeType {
