@@ -2,6 +2,7 @@ use crate::config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderO
 use crate::parser::{Doc, RefNode};
 use serde::{Deserialize, Serialize};
 use serde_json;
+use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
@@ -13,7 +14,7 @@ export type IJsString = string;
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_NODE_TREE: &'static str = r#"
 export type IJsNodeTree = {
-  tag_index: number;
+  uuid?: string;
   depth: number;
   node_type: NodeType;
   begin_at: CodePosAt;
@@ -73,15 +74,17 @@ pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode,
   let mut doc =
     Doc::parse(content, options.into()).map_err(|e| JsValue::from_str(&e.to_string()))?;
   doc.into_json();
-  let result = IJsNode::from(doc.root).into();
+  let result = IJsNode::from(doc).into();
   Ok(result)
 }
 
 #[wasm_bindgen]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IJsNode {
   #[wasm_bindgen(skip)]
   pub root: RefNode,
+  #[wasm_bindgen(skip)]
+  pub tags: HashMap<String, RefNode>,
 }
 
 #[wasm_bindgen]
@@ -105,18 +108,40 @@ impl IJsNode {
     let result = Doc::render_js_tree(Rc::clone(&self.root), &options.into());
     Ok(JsValue::from_str(result.as_str()).into())
   }
+
+  #[wasm_bindgen(js_name = getTagByUuid)]
+  pub fn get_tag_by_uuid(&self, uuid: &str) -> Result<Option<IJsNode>, JsValue> {
+    Ok(self.tags.get(uuid).map(|node| Rc::clone(&node).into()))
+  }
 }
 
-impl From<IJsNode> for RefNode {
-  fn from(node: IJsNode) -> Self {
-    node.root
+impl From<Doc> for IJsNode {
+  fn from(doc: Doc) -> Self {
+    IJsNode {
+      root: Rc::clone(&doc.root),
+      tags: doc.tags,
+    }
+  }
+}
+
+fn map_tags(cur: RefNode, tags: &mut HashMap<String, RefNode>) {
+  if let Some(childs) = &cur.borrow().childs {
+    tags.insert(cur.borrow().uuid.as_ref().unwrap().clone(), Rc::clone(&cur));
+    if childs.len() > 0 {
+      for child in childs {
+        map_tags(Rc::clone(&child), tags);
+      }
+    }
   }
 }
 
 impl From<RefNode> for IJsNode {
-  fn from(node: RefNode) -> Self {
+  fn from(root: RefNode) -> Self {
+    let mut tags: HashMap<String, RefNode> = HashMap::new();
+    map_tags(Rc::clone(&root), &mut tags);
     IJsNode {
-      root: Rc::clone(&node),
+      root: Rc::clone(&root),
+      tags,
     }
   }
 }

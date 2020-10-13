@@ -2,10 +2,10 @@
 
 A html parser write in rust, build wasm code for npm package.
 
-[![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.org/fefit/rphtml)
+[![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.com/github/fefit/rphtml)
 [![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg)](https://codecov.io/gh/fefit/rphtml)
 
-# use in node
+## Use in node
 
 ```bash
 # npm
@@ -115,17 +115,25 @@ console.log(code);
 
   ```javascript
   {
-    tag_index: number; // the tag's index, just for element tag node.
+    uuid?: string; // the tag's uuid, only for element tag node.
     depth: number; // the node's depth of the nested.
     node_type: NodeType;
     begin_at: CodePosAt;
     end_at: CodePosAt;
     end_tag?: IJsNodeTree; // the closed tag
     meta?: IJsNodeTagMeta; // tag meta information.
-    childs: Array<IJsNodeTree>; // the childs of the tag.
+    childs?: Array<IJsNodeTree>; // the childs of the tag.
   }
 
   ```
 
 - ### `toString() : string`
+
   return the string of the json data, like `JSON.stringify()`, you can use `JSON.parse()` in javascript to get the json data,is same as the `toJSON()`.
+
+- ### `getTagByUuid(uuid:string) : IJsNode`
+  return the tag node by uuid.
+
+## License
+
+[MIT License](./LICENSE).

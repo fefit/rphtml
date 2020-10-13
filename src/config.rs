@@ -34,7 +34,7 @@ extern "C" {
   pub type IJsRenderOptions;
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ParseOptions {
   pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
   pub allow_self_closing: bool,     // allow self closing that not void elements

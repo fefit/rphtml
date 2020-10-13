@@ -12,6 +12,7 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::Path;
 use std::rc::{Rc, Weak};
+use uuid::Uuid;
 use wasm_bindgen::prelude::*;
 /*
 * constants
@@ -334,7 +335,8 @@ pub type RefNode = Rc<RefCell<Node>>;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Node {
   // if a tag node, add a index to the node
-  pub tag_index: usize,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub uuid: Option<String>,
 
   // the node's depth in the document
   pub depth: usize,
@@ -385,7 +387,7 @@ impl Node {
       content: None,
       childs: None,
       meta: None,
-      tag_index: 0,
+      uuid: None,
       depth: 0,
       special: None,
     };
@@ -1163,11 +1165,13 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
     'a'..='z' | 'A'..='Z' => {
       // new tag node, add tag_index
       let mut inner_node = Node::new(NodeType::Tag, doc.mem_position);
-      inner_node.tag_index = doc.tag_index + 1;
-      doc.add_new_node(Rc::new(RefCell::new(inner_node)));
+      let uuid = Uuid::new_v4();
+      inner_node.uuid = Some(uuid.to_string());
+      let node = Rc::new(RefCell::new(inner_node));
+      doc.tags.insert(uuid.to_string(), Rc::clone(&node));
+      doc.add_new_node(node);
       doc.set_text_spaces_between();
       doc.set_code_in(Tag);
-      doc.tag_index += 1;
       doc.prev_chars.push(c);
     }
     '/' => {
@@ -1315,11 +1319,11 @@ pub struct Doc {
   prev_char: char,
   chain_nodes: Vec<RefNode>,
   current_node: RefNode,
-  tag_index: usize,
   in_special: Option<(SpecialTag, &'static str)>,
   repeat_whitespace: bool,
   check_textnode: Option<RefNode>,
   handle: NextHandle,
+  pub tags: HashMap<String, RefNode>,
   pub total_chars: usize,
   pub parse_options: ParseOptions,
   pub nodes: Vec<RefNode>,
@@ -1349,7 +1353,7 @@ impl Doc {
       nodes,
       chain_nodes,
       current_node,
-      tag_index: 0,
+      tags: HashMap::new(),
       total_chars: 0,
       detect: None,
       in_special: None,
@@ -1656,5 +1660,4 @@ impl Doc {
   pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {
     tree.borrow().build(options)
   }
-  //
 }
