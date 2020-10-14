@@ -275,6 +275,16 @@ fn test_inner_html() -> HResult {
   });
   assert_eq!(inner_html, inner_code);
   assert_eq!(render(&doc), code);
+  // special tag
+  let inner_html = r##"var a = 1;var b = 2;"##;
+  let code = format!("<script>{}</script>", inner_html);
+  let doc = parse(code.as_str())?;
+  let inner_code = doc.render(&RenderOptions {
+    inner_html: true,
+    ..Default::default()
+  });
+  assert_eq!(inner_html, inner_code);
+  assert_eq!(render(&doc), code);
   Ok(())
 }
 
@@ -306,6 +316,21 @@ fn test_minify_spaces() -> HResult {
     minify_spaces: true,
     ..Default::default()
   });
+  assert_eq!(render_code, code);
+  Ok(())
+}
+
+#[test]
+fn test_self_closing() -> HResult {
+  let code = r##"<component is="Header" />"##;
+  let doc = Doc::parse(
+    code,
+    ParseOptions {
+      allow_self_closing: true,
+      ..Default::default()
+    },
+  )?;
+  let render_code = render(&doc);
   assert_eq!(render_code, code);
   Ok(())
 }

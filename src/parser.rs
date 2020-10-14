@@ -455,10 +455,10 @@ impl Node {
             result.push_str(format!("</{}", tag_name).as_str());
           }
           result.push(TAG_END_CHAR);
-          // content for some special tags, such as style/script
-          if let Some(_) = &self.content {
-            result.push_str(get_content(&self.content).as_str());
-          }
+        }
+        // content for some special tags, such as style/script
+        if let Some(_) = &self.content {
+          result.push_str(get_content(&self.content).as_str());
         }
       }
       TagEnd => {

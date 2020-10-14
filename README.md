@@ -103,7 +103,7 @@ console.log(code);
 
     - `lowercase_tagname` if true, will always translate the tag's name to lowercase
 
-    - `minify_spaces` if true, will minify the spaces into one space if not in `pre` tag.
+    - `minify_spaces` if true, will remove all the spaces between tags and minify the text node's repeat spaces into one if not in `pre` tag.
 
     - `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
 

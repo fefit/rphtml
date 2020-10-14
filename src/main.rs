@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r#"<div class="read">   hahaha<span>haaa</span>aaaaaa  </div>"#;
+  let code = r#"<script>   hahaha<span>haaa</span>aaaaaa  </script>"#;
   let doc = Doc::parse(
     code,
     ParseOptions {
