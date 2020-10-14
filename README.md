@@ -111,6 +111,8 @@ console.log(code);
 
     - `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
 
+    - `inner_html` if true,will output the tag's inner html.
+
 - ### `toJson() : IJsNodeTree`
 
   ```javascript

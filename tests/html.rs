@@ -251,3 +251,61 @@ fn test_tag_name() -> HResult {
   assert_eq!(render(&doc), code);
   Ok(())
 }
+
+#[test]
+fn test_inner_html() -> HResult {
+  // normal
+  let inner_html = r##"<span class="sp">long time</span>"##;
+  let code = format!("<div>{}</div>", inner_html);
+  let doc = parse(code.as_str())?;
+  let inner_code = doc.render(&RenderOptions {
+    inner_html: true,
+    ..Default::default()
+  });
+  assert_eq!(inner_html, inner_code);
+  assert_eq!(render(&doc), code);
+  // pre tag
+  let inner_html = r##"   minify spaces   "##;
+  let code = format!("<pre class='pre'>{}</pre>", inner_html);
+  let doc = parse(code.as_str())?;
+  let inner_code = doc.render(&RenderOptions {
+    inner_html: true,
+    minify_spaces: true,
+    ..Default::default()
+  });
+  assert_eq!(inner_html, inner_code);
+  assert_eq!(render(&doc), code);
+  Ok(())
+}
+
+#[test]
+fn test_minify_spaces() -> HResult {
+  // spaces between tags
+  let inner_html = r##"<span class="sp">long time</span>"##;
+  let code = format!("<div>   {}   </div>", inner_html);
+  let doc = parse(code.as_str())?;
+  let render_code = doc.render(&RenderOptions {
+    minify_spaces: true,
+    inner_html: true,
+    ..Default::default()
+  });
+  assert_eq!(inner_html, render_code);
+  assert_eq!(render(&doc), code);
+  // spaces between text
+  let code = r#"<div>  whitespaces   repeat     </div>"#;
+  let doc = parse(code)?;
+  let render_code = doc.render(&RenderOptions {
+    minify_spaces: true,
+    ..Default::default()
+  });
+  assert_eq!(render_code, r#"<div> whitespaces repeat </div>"#);
+  // spaces in pre tag
+  let code = r#"<pre>  whitespaces   repeat     </pre>"#;
+  let doc = parse(code)?;
+  let render_code = doc.render(&RenderOptions {
+    minify_spaces: true,
+    ..Default::default()
+  });
+  assert_eq!(render_code, code);
+  Ok(())
+}

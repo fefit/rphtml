@@ -23,6 +23,7 @@ export interface IJsRenderOptions {
   remove_attr_quote?: boolean;
   remove_comment?: boolean;
   remove_endtag_space?: boolean;
+  inner_html?: boolean;
 }
 "#;
 
@@ -74,6 +75,7 @@ pub struct RenderOptions {
   pub remove_attr_quote: bool,
   pub remove_comment: bool,
   pub always_close_void: bool,
+  pub inner_html: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -84,6 +86,7 @@ pub struct JsRenderOptions {
   pub remove_attr_quote: Option<bool>,
   pub remove_comment: Option<bool>,
   pub always_close_void: Option<bool>,
+  pub inner_html: Option<bool>,
 }
 
 impl From<IJsRenderOptions> for JsRenderOptions {
@@ -104,6 +107,7 @@ impl From<JsRenderOptions> for RenderOptions {
       remove_attr_quote: optional_bool(options.remove_attr_quote),
       remove_comment: optional_bool(options.remove_comment),
       always_close_void: optional_bool(options.always_close_void),
+      inner_html: optional_bool(options.inner_html),
     }
   }
 }

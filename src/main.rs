@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript"/></svg>"#;
+  let code = r#"<div class="read">   hahaha<span>haaa</span>aaaaaa  </div>"#;
   let doc = Doc::parse(
     code,
     ParseOptions {
@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   let render_code = doc.render(&RenderOptions {
     minify_spaces: true,
     remove_comment: true,
+    inner_html: true,
     ..Default::default()
   });
   println!("cur result is {:?}, {}", doc.root, doc.total_chars);

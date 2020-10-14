@@ -395,7 +395,12 @@ impl Node {
     };
   }
   // build node
-  fn build_node(&self, options: &RenderOptions, mut is_in_pre: bool) -> (String, bool) {
+  fn build_node(
+    &self,
+    options: &RenderOptions,
+    mut is_in_pre: bool,
+    is_inner_html: bool,
+  ) -> (String, bool) {
     let mut result = String::from("");
     use NodeType::*;
     match self.node_type {
@@ -438,20 +443,22 @@ impl Node {
             tag_name.to_lowercase() == "pre"
           }
         };
-        let attrs = meta.get_attrs(options.remove_attr_quote);
-        let tag = format!("<{}{}", tag_name, attrs);
-        result.push_str(tag.as_str());
-        // add self closing
-        if meta.self_closed || (meta.auto_fix && options.always_close_void) {
-          result.push_str(" /");
-        } else if meta.auto_fix && self.end_tag.is_none() {
+        if !is_inner_html {
+          let attrs = meta.get_attrs(options.remove_attr_quote);
+          let tag = format!("<{}{}", tag_name, attrs);
+          result.push_str(tag.as_str());
+          // add self closing
+          if meta.self_closed || (meta.auto_fix && options.always_close_void) {
+            result.push_str(" /");
+          } else if meta.auto_fix && self.end_tag.is_none() {
+            result.push(TAG_END_CHAR);
+            result.push_str(format!("</{}", tag_name).as_str());
+          }
           result.push(TAG_END_CHAR);
-          result.push_str(format!("</{}", tag_name).as_str());
-        }
-        result.push(TAG_END_CHAR);
-        // content for some special tags, such as style/script
-        if let Some(_) = &self.content {
-          result.push_str(get_content(&self.content).as_str());
+          // content for some special tags, such as style/script
+          if let Some(_) = &self.content {
+            result.push_str(get_content(&self.content).as_str());
+          }
         }
       }
       TagEnd => {
@@ -469,8 +476,10 @@ impl Node {
             is_in_pre = false;
           }
         }
-        content = format!("</{}>", content);
-        result.push_str(content.as_str());
+        if !is_inner_html {
+          content = format!("</{}>", content);
+          result.push_str(content.as_str());
+        }
       }
       HTMLDOCTYPE => {
         let meta = self
@@ -502,23 +511,53 @@ impl Node {
     (result, is_in_pre)
   }
   // build node tree
-  fn build_tree(&self, options: &RenderOptions, mut is_in_pre: bool) -> (String, bool) {
+  fn build_tree(
+    &self,
+    options: &RenderOptions,
+    mut is_in_pre: bool,
+    is_inner_html: bool,
+  ) -> (String, bool) {
     let mut result = String::with_capacity(ALLOC_CHAR_CAPACITY);
     use NodeType::*;
+    let mut need_child_inner_html = false;
     if self.node_type != AbstractRoot {
-      let (content, now_in_pre) = self.build_node(options, is_in_pre);
+      let (content, now_in_pre) = self.build_node(options, is_in_pre, is_inner_html);
       result.push_str(content.as_str());
       is_in_pre = now_in_pre;
+    } else {
+      need_child_inner_html = is_inner_html;
     }
     if let Some(childs) = &self.childs {
+      let mut find_tag = false;
       for child in childs {
-        let (content, now_in_pre) = child.borrow().build_tree(options, is_in_pre);
+        let child = child.borrow();
+        let is_inner_html = if need_child_inner_html {
+          if child.node_type == NodeType::Tag {
+            // only allow only child tag
+            if find_tag {
+              panic!(
+                "the `inner_html` render option can only used for single tag,redundancy tag finded '{}' at {:?}",
+                child.meta.as_ref().unwrap().borrow().name,
+                child.begin_at
+              );
+            }
+            find_tag = true;
+            true
+          } else {
+            false
+          }
+        } else {
+          false
+        };
+        let (content, now_in_pre) = child.build_tree(options, is_in_pre, is_inner_html);
         result.push_str(content.as_str());
         is_in_pre = now_in_pre;
       }
     }
     if let Some(end_tag) = &self.end_tag {
-      let (content, now_in_pre) = end_tag.borrow().build_node(options, is_in_pre);
+      let (content, now_in_pre) = end_tag
+        .borrow()
+        .build_node(options, is_in_pre, is_inner_html);
       result.push_str(content.as_str());
       is_in_pre = now_in_pre
     }
@@ -526,7 +565,7 @@ impl Node {
   }
   // build
   pub fn build(&self, options: &RenderOptions) -> String {
-    let (content, _) = self.build_tree(options, false);
+    let (content, _) = self.build_tree(options, false, options.inner_html);
     content
   }
 }
@@ -1647,12 +1686,16 @@ impl Doc {
   pub fn render(&self, options: &RenderOptions) -> String {
     let mut result = String::with_capacity(self.total_chars);
     let mut is_in_pre = false;
-    for node in &self.nodes[1..] {
-      let (content, now_in_pre) = node.borrow().build_node(options, is_in_pre);
-      result.push_str(content.as_str());
-      is_in_pre = now_in_pre;
+    if !options.inner_html {
+      for node in &self.nodes[1..] {
+        let (content, now_in_pre) = node.borrow().build_node(options, is_in_pre, false);
+        result.push_str(content.as_str());
+        is_in_pre = now_in_pre;
+      }
+      result
+    } else {
+      self.render_tree(options)
     }
-    result
   }
   // render tree
   pub fn render_tree(&self, options: &RenderOptions) -> String {
