@@ -1,7 +1,6 @@
 use crate::config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
 use crate::parser::{Doc, RefNode};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -74,8 +73,8 @@ pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode,
   let options: JsParseOptions = options.map_or(Default::default(), |options| options.into());
   let mut doc =
     Doc::parse(content, options.into()).map_err(|e| JsValue::from_str(&e.to_string()))?;
-  doc.into_json();
-  let result = IJsNode::from(doc).into();
+  doc.prepare_to_json();
+  let result = IJsNode::from(doc);
   Ok(result)
 }
 
@@ -128,7 +127,7 @@ impl From<Doc> for IJsNode {
 fn map_tags(cur: RefNode, tags: &mut HashMap<String, RefNode>) {
   if let Some(childs) = &cur.borrow().childs {
     tags.insert(cur.borrow().uuid.as_ref().unwrap().clone(), Rc::clone(&cur));
-    if childs.len() > 0 {
+    if !childs.is_empty() {
       for child in childs {
         map_tags(Rc::clone(&child), tags);
       }

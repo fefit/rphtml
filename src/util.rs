@@ -1,4 +1,4 @@
-pub fn is_identity(chars: &Vec<char>) -> bool {
+pub fn is_identity(chars: &[char]) -> bool {
   let mut is_first = true;
   let mut has_ns = false;
   for &c in chars {
@@ -19,11 +19,7 @@ pub fn is_identity(chars: &Vec<char>) -> bool {
     }
     return false;
   }
-  if is_first {
-    false
-  } else {
-    true
-  }
+  !is_first
 }
 
 /**

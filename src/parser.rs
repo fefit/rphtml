@@ -306,7 +306,7 @@ impl TagMeta {
       .iter()
       .map(|attr| attr.build(remove_quote))
       .collect();
-    if segs.len() > 0 {
+    if !segs.is_empty() {
       format!(" {}", segs.join(" "))
     } else {
       String::from("")
@@ -380,7 +380,7 @@ pub struct Node {
 impl Node {
   // create a new node
   pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
-    return Node {
+    Node {
       node_type,
       begin_at: code_at,
       end_at: code_at,
@@ -392,7 +392,7 @@ impl Node {
       uuid: None,
       depth: 0,
       special: None,
-    };
+    }
   }
   // build node
   fn build_node(
@@ -457,7 +457,7 @@ impl Node {
           result.push(TAG_END_CHAR);
         }
         // content for some special tags, such as style/script
-        if let Some(_) = &self.content {
+        if self.content.is_some() {
           result.push_str(get_content(&self.content).as_str());
         }
       }
@@ -471,10 +471,8 @@ impl Node {
           if is_in_pre && content == "pre" {
             is_in_pre = false;
           }
-        } else {
-          if is_in_pre && content.to_lowercase() == "pre" {
+        } else if is_in_pre && content.to_lowercase() == "pre" {
             is_in_pre = false;
-          }
         }
         if !is_inner_html {
           content = format!("</{}>", content);
@@ -843,13 +841,11 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                           doc.position,
                         ));
                       }
-                    } else {
-                      if !is_char_available_in_value(&c) {
-                        return Err(ParseError::new(
-                          ErrorKind::CommonError("wrong value character".into()),
-                          doc.position,
-                        ));
-                      }
+                    } else if !is_char_available_in_value(&c) {
+                      return Err(ParseError::new(
+                        ErrorKind::CommonError("wrong value character".into()),
+                        doc.position,
+                      ));
                     }
                   }
                   doc.prev_chars.push(c);
@@ -876,30 +872,27 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
             if is_in_translate {
               meta.is_in_translate = false;
               doc.prev_chars.push(c);
+            } else if (meta.tag_in == DoubleQuotedValue && c == '"')
+                || (meta.tag_in == SingleQuotedValue && c == '\''){
+              meta.tag_in = Wait;
+              let cur_attr = meta.attrs.last_mut().expect("current attr must have");
+              cur_attr.quote = Some(c);
+              cur_attr.value = Some(doc.make_attr_data(doc.chars_to_string()));
+              doc.prev_chars.clear();
             } else {
-              if (meta.tag_in == DoubleQuotedValue && c == '"')
-                || (meta.tag_in == SingleQuotedValue && c == '\'')
-              {
-                meta.tag_in = Wait;
-                let cur_attr = meta.attrs.last_mut().expect("current attr must have");
-                cur_attr.quote = Some(c);
-                cur_attr.value = Some(doc.make_attr_data(doc.chars_to_string()));
-                doc.prev_chars.clear();
-              } else {
-                let is_tran_slash = c == '\\';
-                if is_tran_slash {
-                  meta.is_in_translate = true;
-                }
-                let cur_attr = meta.attrs.last_mut().expect("current attr must have");
-                if !cur_attr.need_quote {
-                  // need quote characters
-                  if is_tran_slash || c.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(&c)
-                  {
-                    cur_attr.need_quote = true;
-                  }
-                }
-                doc.prev_chars.push(c);
+              let is_tran_slash = c == '\\';
+              if is_tran_slash {
+                meta.is_in_translate = true;
               }
+              let cur_attr = meta.attrs.last_mut().expect("current attr must have");
+              if !cur_attr.need_quote {
+                // need quote characters
+                if is_tran_slash || c.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(&c)
+                {
+                  cur_attr.need_quote = true;
+                }
+              }
+              doc.prev_chars.push(c);
             }
           }
         }
@@ -980,7 +973,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
           next_chars.extend(tag_chars);
           doc.detect = Some(next_chars);
         }
-        name @ _ => {
+        name => {
           if doc.in_special.is_none() && !is_self_closing {
             doc.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(name) {
               Some((special, Box::leak(tag_name.into_boxed_str())))
@@ -1013,7 +1006,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
   if c == TAG_END_CHAR {
     let end_tag_name = doc.chars_to_string();
     let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
-    let mut iter = doc.chain_nodes.iter().rev();
+    let iter = doc.chain_nodes.iter().rev();
     let mut back_num: usize = 0;
     let max_back_num: usize = if doc.parse_options.allow_fix_unclose {
       doc.chain_nodes.len() - 1
@@ -1023,7 +1016,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
     let is_allow_fix = max_back_num > 0;
     let mut empty_closed_tags: Vec<RefNode> = vec![];
     let mut real_tag_node: Option<RefNode> = None;
-    while let Some(node) = iter.next() {
+    for node in iter {
       if let Some(meta) = &node.borrow().meta {
         let tag_name = &meta.borrow().name;
         let is_equal = tag_name == &end_tag_name;
@@ -1062,7 +1055,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
       // set code in
       doc.set_code_in(Unkown);
       // fix the empty tags
-      if empty_closed_tags.len() > 0 {
+      if !empty_closed_tags.is_empty() {
         // reverse the tags, keep the childs order
         empty_closed_tags.reverse();
         doc.fix_unclosed_tag(empty_closed_tags, tag);
@@ -1132,7 +1125,7 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
           matched_num += 1;
         }
         chars_len -= 1;
-        if chars_len <= 0 || matched_num == total_len {
+        if chars_len == 0 || matched_num == total_len {
           break;
         }
       }
@@ -1304,8 +1297,8 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
       '[' => {
         // CDATA
         let special_tag_name = doc.in_special.map(|(_, name)| name);
-        if special_tag_name.is_some() {
-          if special_tag_name.unwrap()
+        if let Some(tag_name) = special_tag_name {
+          if tag_name
             == doc
               .chain_nodes
               .last()
@@ -1413,7 +1406,7 @@ impl Doc {
     self.handle = parse_wait_and_text;
   }
   // for serde, remove cycle reference
-  pub fn into_json(&mut self) {
+  pub fn prepare_to_json(&mut self) {
     for node in &self.nodes {
       let mut node = node.borrow_mut();
       node.parent = None;
@@ -1615,13 +1608,14 @@ impl Doc {
       }
       // change all childs's parent and clear
       if let Some(childs) = &tag_node.childs {
-        if childs.len() > 0 {
+        if !childs.is_empty() {
           for child_node in childs.iter() {
-            parent
-              .borrow_mut()
-              .childs
-              .as_mut()
-              .map(|childs| childs.push(Rc::clone(child_node)));
+            if let Some(childs) = parent
+            .borrow_mut()
+            .childs
+            .as_mut(){
+              childs.push(Rc::clone(child_node))
+            };
             let mut child_node = child_node.borrow_mut();
             child_node.parent = Some(Rc::downgrade(parent));
             child_node.depth = cur_depth;

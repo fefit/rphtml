@@ -10,7 +10,7 @@ fn render(doc: &Doc) -> String {
   doc.render(&Default::default())
 }
 
-fn get_attr_content<'a>(v: &'a Option<AttrData>) -> Option<&'a str> {
+fn get_attr_content(v: &Option<AttrData>) -> Option<&str> {
   v.as_ref().map(|AttrData { content, .. }| content.as_str())
 }
 
@@ -39,10 +39,7 @@ fn test_pre_tag() -> HResult {
   let doc = parse("<pre>text in prev</pre><div></div>")?;
   let text_node = doc.nodes[2].borrow();
   let text_in_pre = if let Some(special) = text_node.special {
-    match special {
-      SpecialTag::Pre => true,
-      _ => false,
-    }
+    matches!(special, SpecialTag::Pre)
   } else {
     false
   };
