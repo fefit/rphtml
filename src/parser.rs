@@ -15,6 +15,7 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
+use thiserror::Error;
 /*
 * constants
 */
@@ -38,33 +39,7 @@ impl ParseError {
 // display parse error
 impl fmt::Display for ParseError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    use ErrorKind::*;
-    let position = self.position;
-    let output = match &self.kind {
-      WrongTag(tag) => format!("wrong tag '<{}' at {:?}", tag, position),
-      WrongEndTag(tag) => format!("wrong end tag '</{}' at {:?}", tag, position),
-      UnmatchedClosedTag(tag) => format!("unmatched tag '</{}>' at {:?}", tag, position),
-      UnclosedTag(tag) => format!("unclosed tag '<{}' at {:?}", tag, position),
-      WrongHtmlDoctype(c) => format!("wrong html doctype character '{}' at {:?}", c, position),
-      NoSpaceBetweenAttr(c) => format!(
-        "the tag's attribute '{}' should after a space.{:?}",
-        c, position
-      ),
-      UnrecognizedTag(finded, maybe) => format!(
-        "unrecognized tag '{}' at {:?}, do you mean '{}'",
-        finded, position, maybe
-      ),
-      WrongTagIdentity(ident) => format!("wrong tag name '{}' at {:?}", ident, position),
-      WrongRootTextNode(text) => format!("wrong text '{}...' in root node at {:?}", text, position),
-      ChildInSpecialTag(tag, c) => format!(
-        "wrong child tag '<{}' in tag '{}'  at {:?}",
-        c, tag, position
-      ),
-      UnexpectedCharacter(c) => format!("unexpected character '{}' at {:?}", c, position),
-      WrongCaseSensitive(tag) => format!("case-sensitive tag '{}' at {:?}", tag, position),
-      WrongSelfClosing(tag) => format!("wrong self-closing tag '{}' at {:?}, if you want across this validation, use 'allow-self-closing' option", tag, position),
-      CommonError(msg) => msg.to_string(),
-    };
+    let output = format!("{}{}", self.position, self.kind);
     f.write_str(output.as_str())
   }
 }
@@ -72,21 +47,44 @@ impl fmt::Display for ParseError {
 // impl trait Error
 impl Error for ParseError {}
 
-#[derive(Debug)]
+// create parse error
+fn create_parse_error(kind: ErrorKind, position: CodePosAt)-> HResult{
+  let err = ParseError::new(
+    kind,
+    position
+  );
+  Err(err)
+}
+
+#[derive(Error, Debug)]
 pub enum ErrorKind {
+  #[error("wrong tag <{0}")]
   WrongTag(String),
+  #[error("wrong end tag </{0}")]
   WrongEndTag(String),
+  #[error("wrong child tag '<{1}' in tag '{}'")]
   ChildInSpecialTag(String, char),
+  #[error("unmatched tag '</{0}>'")]
   UnmatchedClosedTag(String),
+  #[error("unexpected character '{0}'")]
   UnexpectedCharacter(char),
+  #[error("the tag '{0}' is not closed")]
   UnclosedTag(String),
+  #[error("the tag's attribute should split by spaces,wrong character '{0}'")]
   NoSpaceBetweenAttr(char),
+  #[error("unexpected character '{0}' in html doctype decalaration")]
   WrongHtmlDoctype(char),
+  #[error("unrecognized tag '{0}', do you mean '{1}'")]
   UnrecognizedTag(String, String),
+  #[error("wrong tag name '{0}'")]
   WrongTagIdentity(String),
+  #[error("not allowed text '{0}' in root node")]
   WrongRootTextNode(String),
+  #[error("because the config of 'case-sensitive', the tag '{0}' is not matched correctly.")]
   WrongCaseSensitive(String),
+  #[error("wrong self-closing tag '{0}',make sure you set the config allow self-closing.")]
   WrongSelfClosing(String),
+  #[error("{0}")]
   CommonError(String),
 }
 
@@ -163,14 +161,14 @@ fn get_content(content: &Option<Vec<char>>) -> String {
  * the doc's position
 */
 #[wasm_bindgen]
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub struct CodePosAt {
   pub line_no: usize,
   pub col_no: usize,
   pub index: usize,
 }
 
-impl fmt::Debug for CodePosAt {
+impl fmt::Display for CodePosAt {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let output = format!(
       "[line:{},col:{},index:{}]",
@@ -583,7 +581,7 @@ impl SpecialTag {
     tag_name: &str,
     c: char,
     position: CodePosAt,
-  ) -> Result<(), Box<dyn Error>> {
+  ) -> HResult {
     use CodeTypeIn::*;
     use SpecialTag::*;
     match code_in {
@@ -599,7 +597,7 @@ impl SpecialTag {
           tag_name, code_in, position
         );
         if code_in != &TextNode {
-          return Err(ParseError::new(ErrorKind::CommonError(message), position));
+          return create_parse_error(ErrorKind::CommonError(message), position);
         }
       }
       Svg | MathML => {
@@ -612,7 +610,7 @@ impl SpecialTag {
               "the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
               tag_name, code_in, position
             );
-            return Err(ParseError::new(ErrorKind::CommonError(message), position));
+            return create_parse_error(ErrorKind::CommonError(message), position);
           }
         };
       }
@@ -656,10 +654,10 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
     _ => {
       // only whitespace allowed
       /* if cur_depth == 1 && !c.is_ascii_whitespace() {
-        return Err(ParseError::new(
+        return create_parse_error(
           ErrorKind::WrongRootTextNode(c.to_string()),
           doc.position,
-        ));
+        );
       } */
       if doc.code_in != TextNode {
         // new text node
@@ -703,10 +701,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
             let mut is_end_key_or_value = false;
             // tag in wait, if prev char is '/', the current char must be the end of tag
             if tag_in_wait && doc.prev_char == '/' && c != TAG_END_CHAR {
-              return Err(ParseError::new(
-                ErrorKind::UnexpectedCharacter(c),
-                doc.position,
-              ));
+              return doc.error(ErrorKind::UnexpectedCharacter(c));
             }
             if c.is_ascii_whitespace() {
               // if tag in wait state, ignore whitespaces, otherwise, is an end of key or value
@@ -724,10 +719,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                     if doc.parse_options.case_sensitive_tagname
                       && meta.name.to_lowercase() != meta.name
                     {
-                      return Err(ParseError::new(
-                        ErrorKind::WrongCaseSensitive(meta.name.clone()),
-                        doc.position,
-                      ));
+                      return doc.error(ErrorKind::WrongCaseSensitive(meta.name.clone()));
                     }
                   // void element has pop before.
                   } else {
@@ -738,10 +730,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                           // is in svg or mathml
                         }
                         _ => {
-                          return Err(ParseError::new(
-                            ErrorKind::WrongSelfClosing(meta.name.clone()),
-                            doc.position,
-                          ));
+                          return doc.error(ErrorKind::WrongSelfClosing(meta.name.clone()));
                         }
                       }
                     }
@@ -767,10 +756,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                   // if not in kv, quoted value should have spaces before.
                   if !meta.is_in_kv {
                     if !doc.prev_char.is_ascii_whitespace() {
-                      return Err(ParseError::new(
-                        ErrorKind::NoSpaceBetweenAttr(c),
-                        doc.position,
-                      ));
+                      return doc.error(ErrorKind::NoSpaceBetweenAttr(c));
                     }
                     // add new value-only attribute
                     meta.attrs.push(Default::default());
@@ -790,10 +776,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                 }
                 '/' => {
                   if doc.code_in != Tag {
-                    return Err(ParseError::new(
-                      ErrorKind::WrongTag(String::from("/")),
-                      doc.position,
-                    ));
+                    return doc.error(ErrorKind::WrongTag(String::from("/")));
                   }
                   if meta.tag_in == Value {
                     // value allow string with slash '/'
@@ -809,10 +792,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                   if meta.prev_is_key {
                     meta.is_in_kv = true;
                   } else {
-                    return Err(ParseError::new(
-                      ErrorKind::WrongTag(String::from("=")),
-                      doc.position,
-                    ));
+                    return doc.error(ErrorKind::WrongTag(String::from("=")));
                   }
                   // end the key or value
                   meta.tag_in = Wait;
@@ -836,16 +816,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
                     // check if key or value is ok
                     if tag_in_key {
                       if !is_char_available_in_key(&c) {
-                        return Err(ParseError::new(
-                          ErrorKind::CommonError("wrong key character".into()),
-                          doc.position,
-                        ));
+                        return doc.error(ErrorKind::CommonError("wrong key character".into()));
                       }
                     } else if !is_char_available_in_value(&c) {
-                      return Err(ParseError::new(
-                        ErrorKind::CommonError("wrong value character".into()),
-                        doc.position,
-                      ));
+                      return doc.error(ErrorKind::CommonError("wrong value character".into()));
                     }
                   }
                   doc.prev_chars.push(c);
@@ -904,19 +878,13 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
           if is_whitespace {
             // tag name ended
             if doc.code_in == HTMLDOCTYPE && cur_tag_name.to_ascii_uppercase() != "DOCTYPE" {
-              return Err(ParseError::new(
-                ErrorKind::WrongHtmlDoctype(c),
-                doc.position,
-              ));
+              return doc.error(ErrorKind::WrongHtmlDoctype(c));
             }
           } else {
             match doc.code_in {
               HTMLDOCTYPE => {
                 // html doctype without any attribute
-                return Err(ParseError::new(
-                  ErrorKind::WrongHtmlDoctype(c),
-                  doc.position,
-                ));
+                return doc.error(ErrorKind::WrongHtmlDoctype(c));
               }
               Tag => {
                 tag_name = cur_tag_name.clone();
@@ -929,10 +897,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
             }
           }
           if !is_identity(&doc.prev_chars) {
-            return Err(ParseError::new(
-              ErrorKind::WrongTagIdentity(cur_tag_name),
-              doc.position,
-            ));
+            return doc.error(ErrorKind::WrongTagIdentity(cur_tag_name));
           }
           let meta = TagMeta {
             name: cur_tag_name,
@@ -1022,10 +987,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
         let is_equal = tag_name == &end_tag_name;
         if is_equal || (tag_name.to_lowercase() == fix_end_tag_name) {
           if doc.parse_options.case_sensitive_tagname && !is_equal {
-            return Err(ParseError::new(
-              ErrorKind::WrongCaseSensitive(tag_name.clone()),
-              doc.position,
-            ));
+            return doc.error(ErrorKind::WrongCaseSensitive(tag_name.clone()));
           }
           real_tag_node = Some(Rc::clone(node));
           break;
@@ -1075,10 +1037,10 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
         .chain_nodes
         .truncate(doc.chain_nodes.len() - back_num - 1);
     } else {
-      return Err(ParseError::new(
+      return create_parse_error(
         ErrorKind::WrongEndTag(end_tag_name),
         doc.current_node.borrow().begin_at,
-      ));
+      );
     }
   } else {
     doc.prev_chars.push(c);
@@ -1221,10 +1183,10 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
       doc.set_code_in(ExclamationBegin);
     }
     _ => {
-      return Err(ParseError::new(
+      return create_parse_error(
         ErrorKind::WrongTag(c.to_string()),
         doc.mem_position,
-      ));
+      );
     }
   };
   Ok(())
@@ -1279,10 +1241,10 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
           doc.detect = None;
         }
       } else {
-        return Err(ParseError::new(
+        return create_parse_error(
           ErrorKind::UnrecognizedTag(doc.chars_to_string(), next_chars.iter().collect::<String>()),
           doc.mem_position,
-        ));
+        );
       }
     }
   } else {
@@ -1311,25 +1273,25 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
               .name
               .as_str()
           {
-            return Err(ParseError::new(
+            return create_parse_error(
               ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
               doc.position,
-            ));
+            );
           } else {
             detect_type = DetectChar::XMLCDATA;
           }
         } else {
-          return Err(ParseError::new(
+          return create_parse_error(
             ErrorKind::CommonError("wrong <![CDATA tag can only used in Svg or MathML".into()),
             doc.position,
-          ));
+          );
         }
       }
       _ => {
-        return Err(ParseError::new(
+        return create_parse_error(
           ErrorKind::WrongTag(doc.chars_to_string()),
           doc.mem_position,
-        ));
+        );
       }
     };
     doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
@@ -1486,7 +1448,7 @@ impl Doc {
     };
   }
   // read one char
-  fn next(&mut self, c: char) -> Result<(), Box<dyn Error>> {
+  fn next(&mut self, c: char) -> HResult {
     let handle = self.handle;
     let _ = handle(self, c)?;
     /*
@@ -1634,7 +1596,7 @@ impl Doc {
     self.in_special.map(|(special, _)| special)
   }
   // end of the doc
-  fn eof(&mut self) -> Result<(), Box<dyn Error>> {
+  fn eof(&mut self) -> HResult {
     let cur_depth = self.chain_nodes.len();
     // check if all tags are closed correctly.
     if cur_depth > 1 {
@@ -1647,10 +1609,10 @@ impl Doc {
           .expect("tag node's meta must have")
           .borrow()
           .name;
-        return Err(ParseError::new(
+        return create_parse_error(
           ErrorKind::UnclosedTag(name.to_owned()),
           begin_at,
-        ));
+        );
       }
       // fix unclosed tags
       let unclosed = self.chain_nodes.split_off(1);
@@ -1667,14 +1629,19 @@ impl Doc {
       }
       last_node.end_at = self.position;
     } else if self.code_in != Unkown && self.code_in != AbstractRoot {
-      return Err(ParseError::new(
+      return create_parse_error(
         ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
         self.current_node.borrow().begin_at,
-      ));
+      );
     }
     // set the root node's end position
     self.root.borrow_mut().end_at = self.position;
     Ok(())
+  }
+  
+  // return error with doc.position
+  fn error(&self, kind: ErrorKind) -> HResult{
+    create_parse_error(kind, self.position)
   }
   // render
   pub fn render(&self, options: &RenderOptions) -> String {

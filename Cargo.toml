@@ -1,6 +1,6 @@
 [package]
 name = "rphtml"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
@@ -12,6 +12,7 @@ readme = "README.md"
 
 [dependencies]
 lazy_static = "1.4.0"
+thiserror = "1.0.21"
 wasm-bindgen = { version="0.2.68", features = ["serde-serialize"] }
 js-sys = { version = "0.3.45" }
 serde = { version = "1.0.116", features = ["derive", "rc"] }

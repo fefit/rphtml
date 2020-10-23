@@ -26,22 +26,8 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r#"<script>   hahaha<span>haaa</span>aaaaaa  </script>"#;
-  let doc = Doc::parse(
-    code,
-    ParseOptions {
-      ..Default::default()
-    },
-  )?;
-  let render_code = doc.render(&RenderOptions {
-    minify_spaces: true,
-    remove_comment: true,
-    inner_html: true,
-    ..Default::default()
-  });
-  println!("cur result is {:?}, {}", doc.root, doc.total_chars);
-  println!("{:?}", code);
-  println!("{:?}", render_code);
-  println!("{:?}", render_code == code);
+  let code = r#"<ab#>"#;
+  let result = Doc::parse(code, Default::default());
+  println!("result:{}", result.err().unwrap());
   Ok(())
 }

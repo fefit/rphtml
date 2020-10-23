@@ -329,5 +329,49 @@ fn test_self_closing() -> HResult {
   )?;
   let render_code = render(&doc);
   assert_eq!(render_code, code);
+  assert!(parse(code).is_err());
   Ok(())
+}
+
+#[test]
+fn test_wrong_tag(){
+  let code = r##"<abc#def>"##;
+  let result = parse(code);
+  assert!(result.is_err());
+}
+
+#[test]
+fn test_wrong_endtag(){
+  let code = r##"<a>something</b>"##;
+  let result = parse(code);
+  assert!(result.is_err());
+}
+
+#[test]
+fn test_unexpect_char(){
+  let code = r##"<a class="" /]"##;
+  let result = parse(code);
+  assert!(result.is_err());
+}
+
+
+#[test]
+fn test_unclosed_tag(){
+  let code = r##"<a><b></b>"##;
+  let result = parse(code);
+  assert!(result.is_err());
+}
+
+#[test]
+fn test_attr_nospace_splitor(){
+  let code = r##"<a readonly"title"></a>"##;
+  let result = parse(code);
+  assert!(result.is_err());
+}
+
+#[test]
+fn test_wrong_doctype(){
+  let code = r##"<!DOCTYP html>"##;
+  let result = parse(code);
+  assert!(result.is_err());
 }
