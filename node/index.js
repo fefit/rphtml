@@ -15,6 +15,7 @@ const tree = ast.toJson();
 console.log(tree);
 const h1uid = tree.childs[1].uuid;
 const h1 = ast.getTagByUuid(h1uid);
+console.log(h1.toJson(), h1.isAloneTag());
 console.log("render h1===>", h1.render({
   inner_html: true
 }));

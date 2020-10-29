@@ -135,7 +135,12 @@ console.log(code);
   return the string of the json data, like `JSON.stringify()`, you can use `JSON.parse()` in javascript to get the json data,is same as the `toJSON()`.
 
 - ### `getTagByUuid(uuid:string) : IJsNode`
+
   return the tag node by uuid.
+
+- ### `isAloneTag: boolean`
+
+  check if the node is a tag node without child tags.
 
 ## License
 

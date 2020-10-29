@@ -1,12 +1,12 @@
 [package]
 name = "rphtml"
-version = "0.2.6"
+version = "0.2.7"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
 description = "a html parser write in rust."
+keywords = ["html", "parser", "html-parser", "html-minify", "html-render"]
 repository = "https://github.com/fefit/rphtml"
-keywords = ["html", "parser", "html parser", "html minify", "html render"]
 categories = ["parser-implementations", "wasm"]
 readme = "README.md"
 

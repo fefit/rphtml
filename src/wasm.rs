@@ -1,5 +1,5 @@
 use crate::config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
-use crate::parser::{Doc, RefNode};
+use crate::parser::{Doc, RefNode, NodeType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -112,6 +112,27 @@ impl IJsNode {
   #[wasm_bindgen(js_name = getTagByUuid)]
   pub fn get_tag_by_uuid(&self, uuid: &str) -> Result<Option<IJsNode>, JsValue> {
     Ok(self.tags.get(uuid).map(|node| Rc::clone(&node).into()))
+  }
+
+  #[wasm_bindgen(js_name = isAloneTag)]
+  pub fn is_alone_tag(&self) -> bool{
+    let cur_node_type = self.root.borrow().node_type;
+    if let Some(childs) = &self.root.borrow().childs{
+      match childs.len() {
+        1 => childs[0].borrow().node_type == NodeType::Text,
+        num => {
+          if num <= 3{
+            return childs.iter().all(|child|{
+              let node_type = child.borrow().node_type;
+              node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
+            });
+          }
+          false
+        }
+      }
+    } else {
+      cur_node_type == NodeType::Tag
+    }
   }
 }
 
