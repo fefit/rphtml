@@ -1,7 +1,10 @@
 # rphtml
 
-A html parser write in rust, build wasm code for npm package.
+A html parser written in rust, build wasm code for npm package.
 
+一个用 rust 编写的 html 解析器，通过 wasm-pack/wasm-bindgen 提供 npm 包。
+
+[![npm version](https://badge.fury.io/js/rphtml.svg)](https://badge.fury.io/js/rphtml)
 [![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.com/github/fefit/rphtml)
 [![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg)](https://codecov.io/gh/fefit/rphtml)
 
@@ -79,71 +82,171 @@ console.log(code);
 
 ## API
 
-- ### `parse(content: string, parseOptions?: IJsParseOptions) : IJsNode`
+### Methods
 
-  parse html code to nodes.
+### `parse(content: string, parseOptions?: IJsParseOptions) : IJsNode`
 
-  - #### argument: `IJsParseOptions`
+parse html code to AST, it's a pointer.
 
-    - `allow_self_closing` if allow not void element use self-closing, e.g: `<div />`
+通过 `parse` 静态方法将 html 字符串解析成 html 解析树，它的返回值是一个指针对象，需要调用其上的方法才能获得实际可用的数据。
 
-    - `allow_fix_unclose` if allow empty tags such as `<div><button class="btn"></div>`,not recommend
+---
 
-    - `case_sensitive_tagname` if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
+### `IJsParseOptions`
 
-    - `use_text_string` if true, the Node's text content will return a `text` field with all characters, otherwise will return a `content` field which is a character array.
+```typescript
+// static 'parse' method argument options.
+// parse方法提供以下配置参数
+type IJsParserOptions = {
+  allow_self_closing?: boolean;
+  allow_fix_unclose?: boolean;
+  case_sensitive_tagname?: boolean;
+  use_text_string?: boolean;
+};
+```
 
-### return value: `IJsNode`
+- `allow_self_closing`
 
-- ### `render(renderOptions?: IJsRenderOptions) : string`
+  if allow not void element use self-closing, e.g.: `<div />`
 
-  render the node to html code.
+  是否允许自闭合标签，不为 true 的情况下 `<div />` 这种写法将视为错误。
 
-  - #### render function argument: `IJsRenderOptions`
+- `allow_fix_unclose`
 
-    - `always_close_void` always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
+  if allow empty tags such as `<div><button class="btn"></div>`,not recommend
 
-    - `lowercase_tagname` if true, will always translate the tag's name to lowercase
+  是否允许自动修复没有闭合的标签，不推荐，因为这种修复很可能是错误的。
 
-    - `minify_spaces` if true, will remove all the spaces between tags and minify the text node's repeat spaces into one if not in `pre` tag.
+- `case_sensitive_tagname`
 
-    - `remove_attr_quote` if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
+  if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
 
-    - `remove_comment` if true, will remove all comments node.
+  tag 标签是否区分大小写，区分大小写的情况下，`<div>`和`<DIV>` 将视作不同的标签，将影响标签的配对。
 
-    - `remove_endtag_space` if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
+- `use_text_string`
 
-    - `inner_html` if true,will output the tag's inner html.
+  if true, the Node's text content will return a `text` field with all characters, otherwise will return a `content` field which is a character array.
 
-- ### `toJson() : IJsNodeTree`
+  对于文本节点、script/style 标签等文本部分是否返回整个字符串，为 true 的话，将把整个字符串保存在`text`字段内;否则保存在`content`字段内，`content`是所有文本部分字符的一个数组。
 
-  ```javascript
-  {
-    uuid?: string; // the tag's uuid, only for element tag node.
-    depth: number; // the node's depth of the nested.
-    node_type: NodeType;
-    begin_at: CodePosAt;
-    end_at: CodePosAt;
-    text?: string; // if use_text_string is true, return string instead of content character array.
-    content?: Array<string>; // content character
-    end_tag?: IJsNodeTree; // the closed tag
-    meta?: IJsNodeTagMeta; // tag meta information.
-    childs?: Array<IJsNodeTree>; // the childs of the tag.
-  }
+---
 
-  ```
+### `IJsNode`
 
-- ### `toString() : string`
+### Methods of IJsNode
 
-  return the string of the json data, like `JSON.stringify()`, you can use `JSON.parse()` in javascript to get the json data,is same as the `toJSON()`.
+#### `render(renderOptions?: IJsRenderOptions) : string`
 
-- ### `getTagByUuid(uuid:string) : IJsNode`
+render the ast to html code.
 
-  return the tag node by uuid.
+将 html 解析树渲染成 html 代码。
 
-- ### `isAloneTag: boolean`
+---
 
-  check if the node is a tag node without child tags.
+#### `IJsRenderOptions`
+
+```typescript
+type IJsRenderOptions = {
+  always_close_void?: boolean;
+  lowercase_tagname?: boolean;
+  minify_spaces?: boolean;
+  remove_attr_quote?: boolean;
+  remove_comment?: boolean;
+  remove_endtag_space?: boolean;
+  inner_html?: boolean;
+};
+```
+
+- `always_close_void`
+
+  always use self-closing for void elements.`<meta charset="utf8">` will output `<meta charset="utf8" />`
+
+  为 true 时，将始终给 void elements 标签元素添加反斜杠自闭合标记。
+
+- `lowercase_tagname`
+
+  if true, will always translate the tag's name to lowercase
+
+  为 true 时，将强制将所有标签名转为小写。
+
+- `minify_spaces`
+
+  if true, will remove all the spaces between tags and minify the text node's repeat spaces into one if not in `pre` tag.
+
+  为 true 时，将去除标签之间的空格；标签内文本左右的空格将会压缩成一个；pre 标签的空格将保持不变。
+
+- `remove_attr_quote`
+
+  if true, will remove the attribute value's quote `'` or `"`, if the value has special character such as spaces and `<` e.g, it will make no sense.
+
+  为 true 时，将会根据属性值有条件的去掉引号。
+
+- `remove_comment`
+
+  if true, will remove all comments node.
+
+  是否移除所有注释标签。
+
+- `remove_endtag_space`
+
+  if true, will remove the tag's end spaces, `<div></div >` will output `<div></div>`
+
+  由于结束标签后面允许出现空格，设为 true 的情况下将会去除这些空格。
+
+- `inner_html`
+
+  if true,will output the tag's inner html.
+
+  为 true 的情况下，将获取 innerHTML.
+
+---
+
+### `toJson() : IJsNodeTree`
+
+return a json data from the pointer after call the `parse` method.
+
+通过`parse`方法得到了指针对象后，调用`toJson()`方法可以获得一个 json 格式的解析树数据。
+
+```typescript
+type IJsNodeTree = {
+  uuid?: string; // the tag's uuid, only for element tag node.
+  depth: number; // the node's depth of the nested.
+  node_type: NodeType;
+  begin_at: CodePosAt;
+  end_at: CodePosAt;
+  text?: string; // if use_text_string is true, return string instead of content character array.
+  content?: Array<string>; // content character
+  end_tag?: IJsNodeTree; // the closed tag
+  meta?: IJsNodeTagMeta; // tag meta information.
+  childs?: Array<IJsNodeTree>; // the childs of the tag.
+};
+```
+
+---
+
+### `toString() : string`
+
+return the string of the json data, like `JSON.stringify()`, you can use `JSON.parse()` in javascript to get the json data,is same as the `toJSON()`.
+
+和`toJson`方法类似，但该方法返回的是 json 字符串，需要进行 parse 后才能获得真实的 json 对象。
+
+---
+
+### `getTagByUuid(uuid:string) : IJsNode`
+
+return the tag node by uuid.
+
+每个 tag 节点都会带有自己的 uuid 标记，通过调用根节点的该方法可以获得子节点的引用。与 dom 内的`getElementById`方法类似。
+
+---
+
+### `isAloneTag: boolean`
+
+check if the node is a tag node without child tags, e.g. `<div>abc</div>`
+
+属性`isAloneTag`表示标签 tag 不包含有其它子 tag。
+
+---
 
 ## License
 
