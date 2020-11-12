@@ -11,6 +11,7 @@ export interface IJsParseOptions {
   allow_fix_unclose?: boolean;
   allow_self_closing?: boolean;
   case_sensitive_tagname?: boolean;
+  use_text_string?: boolean;
 }
 "#;
 
@@ -40,12 +41,14 @@ pub struct ParseOptions {
   pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
   pub allow_self_closing: bool,     // allow self closing that not void elements
   pub allow_fix_unclose: bool,      // allow auto fix unclosed tag
+  pub use_text_string: bool
 }
 #[derive(Default, Deserialize, Serialize)]
 pub struct JsParseOptions {
   pub case_sensitive_tagname: Option<bool>,
   pub allow_self_closing: Option<bool>,
   pub allow_fix_unclose: Option<bool>,
+  pub use_text_string: Option<bool>
 }
 
 impl From<IJsParseOptions> for JsParseOptions {
@@ -63,6 +66,7 @@ impl From<JsParseOptions> for ParseOptions {
       case_sensitive_tagname: optional_bool(options.case_sensitive_tagname),
       allow_self_closing: optional_bool(options.allow_self_closing),
       allow_fix_unclose: optional_bool(options.allow_fix_unclose),
+      use_text_string: optional_bool(options.use_text_string)
     }
   }
 }

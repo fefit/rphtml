@@ -10,9 +10,10 @@ const ast = rphtml.parse(htmlCode, {
   allow_self_closing: true,
   allow_fix_unclose: false,
   case_sensitive_tagname: false,
+  use_text_string: true
 });
 const tree = ast.toJson();
-console.log(tree);
+console.dir(tree.childs);
 const h1uid = tree.childs[1].uuid;
 const h1 = ast.getTagByUuid(h1uid);
 console.log(h1.toJson(), h1.isAloneTag());

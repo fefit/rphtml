@@ -1,3 +1,4 @@
 ignore:
   - src/main.rs
   - src/wasm.rs
+  - src/config.rs

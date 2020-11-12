@@ -91,6 +91,8 @@ console.log(code);
 
     - `case_sensitive_tagname` if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
 
+    - `use_text_string` if true, the Node's text content will return a `text` field with all characters, otherwise will return a `content` field which is a character array.
+
 ### return value: `IJsNode`
 
 - ### `render(renderOptions?: IJsRenderOptions) : string`
@@ -122,7 +124,8 @@ console.log(code);
     node_type: NodeType;
     begin_at: CodePosAt;
     end_at: CodePosAt;
-    content?: Array<string>;
+    text?: string; // if use_text_string is true, return string instead of content character array.
+    content?: Array<string>; // content character
     end_tag?: IJsNodeTree; // the closed tag
     meta?: IJsNodeTagMeta; // tag meta information.
     childs?: Array<IJsNodeTree>; // the childs of the tag.

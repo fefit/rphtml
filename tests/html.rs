@@ -46,7 +46,7 @@ fn test_pre_tag() -> HResult {
   let div_not_in_pre = doc.nodes[5].borrow().special.is_none();
   assert!(text_in_pre);
   assert!(div_not_in_pre);
-  // test pre render
+  // pre render should keep spaces
   let code = r##"
     <pre> spaces </pre>
   "##;
@@ -56,6 +56,17 @@ fn test_pre_tag() -> HResult {
     ..Default::default()
   };
   assert_eq!(doc.render(&options), r#"<pre> spaces </pre>"#);
+  // mix pre and others
+  let code = r##"<Pre> abc </PRE> <a>  </a>"##; 
+  let doc = parse(code)?;
+  let options = RenderOptions {
+    lowercase_tagname: true,
+    minify_spaces: true,
+    ..Default::default()
+  };
+  assert_eq!(doc.render(&options), r#"<pre> abc </pre><a> </a>"#);
+  // pre tag can't have sub tags
+  assert!(parse(r##"<pre><a></a></pre>"##).is_err());
   Ok(())
 }
 
@@ -197,6 +208,7 @@ fn test_comment() -> HResult {
   "##;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
+  // remove comments
   assert_eq!(
     doc.render(&RenderOptions {
       minify_spaces: true,
@@ -205,6 +217,12 @@ fn test_comment() -> HResult {
     }),
     ""
   );
+  // take '->' as comment's content
+  let code = r##"<!-- 
+  // still in comments->
+  -->"##;
+  let doc = parse(code)?;
+  assert_eq!(render(&doc), code);
   Ok(())
 }
 
@@ -227,6 +245,13 @@ fn test_svg_tag() -> HResult {
   let code = r#"<svg version="1.1" baseProfile="full" width="300" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="red" /><text x="250" y="150" font-family="Verdana" font-size="55"><![CDATA[<div> is something]]></text></svg>"#;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
+  // wrong svg sub nodes, such as text and other no tag nodes
+  let code = r##"<svg>abc</svg>"##;
+  assert!(parse(code).is_err());
+  // svg allow style,script
+  let code = r##"<svg><style></style><script></script></svg>"##;
+  let doc = parse(code)?;
+  assert_eq!(render(&doc), code);
   Ok(())
 }
 
@@ -235,6 +260,12 @@ fn test_mathml_tag() -> HResult {
   let code = r#"<math><mrow></mrow></math>"#;
   let doc = parse(code)?;
   assert_eq!(render(&doc), code);
+  // wrong math nodes, the same as svg tag
+  let code = r##"<math>abc</math>"##;
+  assert!(parse(code).is_err());
+  // math also can't has style or script tag
+  let code = r##"<math><style></style></math>"##;
+  assert!(parse(code).is_err());
   Ok(())
 }
 
@@ -338,6 +369,10 @@ fn test_wrong_tag(){
   let code = r##"<abc#def>"##;
   let result = parse(code);
   assert!(result.is_err());
+  // wrong tag
+  let code = r##"<123>"##;
+  let result = parse(code);
+  assert!(result.is_err());
 }
 
 #[test]
@@ -360,6 +395,10 @@ fn test_unclosed_tag(){
   let code = r##"<a><b></b>"##;
   let result = parse(code);
   assert!(result.is_err());
+  // un ended
+  let code = r##"<b></b><a>text"##;
+  let result = parse(code);
+  assert!(result.is_err());
 }
 
 #[test]
@@ -374,4 +413,35 @@ fn test_wrong_doctype(){
   let code = r##"<!DOCTYP html>"##;
   let result = parse(code);
   assert!(result.is_err());
+}
+
+#[test]
+fn test_case_senstive() -> HResult{
+  let code = r##"<A></a>"##;
+  let result = Doc::parse(code, ParseOptions{
+    case_sensitive_tagname: true,
+    ..Default::default()
+  });
+  assert!(result.is_err());
+  // self close, allow lowercase or uppercase
+  let code = r##"<META>"##;
+  let doc = Doc::parse(code, ParseOptions{
+    case_sensitive_tagname: true,
+    ..Default::default()
+  })?;
+  assert_eq!(render(&doc), code);
+  Ok(())
+}
+
+#[test]
+fn test_use_text_string() -> HResult{
+  let code = r##"<div>abc</div>def<script>var a;</script>"##;
+  let doc = Doc::parse(code, ParseOptions{
+    use_text_string: true,
+    ..Default::default()
+  })?;
+  assert_eq!(doc.nodes[2].borrow().text, Some("abc".to_string()));
+  assert_eq!(doc.nodes[4].borrow().text, Some("def".to_string()));
+  assert_eq!(doc.nodes[5].borrow().text, Some("var a;".to_string()));
+  Ok(())
 }

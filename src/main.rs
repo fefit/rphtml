@@ -26,14 +26,11 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"
-  <config>
-  {
-      "tpldata": "aaaa"
-  }
-  </config>
-  "##;
-  let result = Doc::parse(code, Default::default())?;
+  let code = r##"<Pre> abc </PRE> aaa "##;
+  let result = Doc::parse(code, ParseOptions{
+    use_text_string: true,
+    ..Default::default()
+  })?;
   println!("result:{:?}", result.nodes);
   Ok(())
 }

@@ -362,6 +362,10 @@ pub struct Node {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub content: Option<Vec<char>>,
 
+  // the text, same as content, but use string instead of Vec<char>
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub text: Option<String>,
+
   // the child nodes
   #[serde(skip_serializing_if = "Option::is_none")]
   pub childs: Option<Vec<RefNode>>,
@@ -385,6 +389,7 @@ impl Node {
       end_tag: None,
       parent: None,
       content: None,
+      text: None,
       childs: None,
       meta: None,
       uuid: None,
@@ -639,8 +644,14 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
     // match the tag start '<'
     TAG_BEGIN_CHAR => {
       if doc.code_in == TextNode {
-        let content = doc.clean_chars_return();
-        doc.current_node.borrow_mut().content = Some(content);
+        if !doc.parse_options.use_text_string{
+          let content = doc.clean_chars_return();
+          doc.current_node.borrow_mut().content = Some(content);
+        } else {
+          let content = doc.chars_to_string();
+          doc.prev_chars.clear();
+          doc.current_node.borrow_mut().text = Some(content);
+        }
         doc.check_textnode = if doc.repeat_whitespace {
           Some(Rc::clone(&doc.current_node))
         } else {
@@ -1028,7 +1039,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
       current_node.depth = tag.borrow().depth;
       current_node.content = Some(end_tag_name.chars().collect());
       // end of special tag
-      if doc.in_special.is_some() && doc.in_special.unwrap().1 == fix_end_tag_name {
+      if doc.in_special.is_some() && doc.in_special.unwrap().1.to_lowercase() == fix_end_tag_name {
         doc.in_special = None;
       }
       doc.prev_chars.clear();
@@ -1107,10 +1118,16 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         end.parent = Some(Rc::downgrade(&doc.current_node));
         // set tag node's content, end_tag
         let node = Rc::new(RefCell::new(end));
-        let content = doc.clean_chars_return();
         let mut current_node = doc.current_node.borrow_mut();
         current_node.end_tag = Some(Rc::clone(&node));
-        current_node.content = Some(content);
+        if !doc.parse_options.use_text_string{
+          let content = doc.prev_chars.clone();
+          current_node.content = Some(content);
+        } else {
+          let content = doc.chars_to_string();
+          current_node.text = Some(content);
+        }
+        doc.prev_chars.clear();
         doc.nodes.push(node);
         // remove current tag
         doc.chain_nodes.pop();
@@ -1623,7 +1640,11 @@ impl Doc {
     if self.code_in == TextNode {
       let mut last_node = self.current_node.borrow_mut();
       last_node.depth = 1;
-      last_node.content = Some(self.prev_chars.clone());
+      if !self.parse_options.use_text_string{
+        last_node.content = Some(self.prev_chars.clone());
+      }else{
+        last_node.text = Some(self.chars_to_string());
+      }
       if self.repeat_whitespace {
         last_node.node_type = NodeType::SpacesBetweenTag;
       }
