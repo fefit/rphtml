@@ -1,5 +1,6 @@
-use crate::config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
-use crate::parser::{Doc, RefNode, NodeType};
+#![cfg(target_arch = "wasm32")]
+use crate::parser::{Doc, NodeType, RefNode};
+use crate::wasm_config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -34,7 +35,6 @@ export type IJsNodeAttrData = {
   end_at: CodePosAt;
 };
 "#;
-
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_NODE_ATTR: &'static str = r#"
 export type IJsNodeAttr = {
@@ -116,14 +116,14 @@ impl IJsNode {
   }
 
   #[wasm_bindgen(js_name = isAloneTag)]
-  pub fn is_alone_tag(&self) -> bool{
+  pub fn is_alone_tag(&self) -> bool {
     let cur_node_type = self.root.borrow().node_type;
-    if let Some(childs) = &self.root.borrow().childs{
+    if let Some(childs) = &self.root.borrow().childs {
       match childs.len() {
         1 => childs[0].borrow().node_type == NodeType::Text,
         num => {
-          if num <= 3{
-            return childs.iter().all(|child|{
+          if num <= 3 {
+            return childs.iter().all(|child| {
               let node_type = child.borrow().node_type;
               node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
             });

@@ -13,9 +13,10 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::Path;
 use std::rc::{Rc, Weak};
-use uuid::Uuid;
-use wasm_bindgen::prelude::*;
 use thiserror::Error;
+use uuid::Uuid;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 /*
 * constants
 */
@@ -48,11 +49,8 @@ impl fmt::Display for ParseError {
 impl Error for ParseError {}
 
 // create parse error
-fn create_parse_error(kind: ErrorKind, position: CodePosAt)-> HResult{
-  let err = ParseError::new(
-    kind,
-    position
-  );
+fn create_parse_error(kind: ErrorKind, position: CodePosAt) -> HResult {
+  let err = ParseError::new(kind, position);
   Err(err)
 }
 
@@ -119,7 +117,7 @@ lazy_static! {
   static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum NodeType {
@@ -160,7 +158,7 @@ fn get_content(content: &Option<Vec<char>>) -> String {
 /**
  * the doc's position
 */
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub struct CodePosAt {
   pub line_no: usize,
@@ -475,7 +473,7 @@ impl Node {
             is_in_pre = false;
           }
         } else if is_in_pre && content.to_lowercase() == "pre" {
-            is_in_pre = false;
+          is_in_pre = false;
         }
         if !is_inner_html {
           content = format!("</{}>", content);
@@ -644,7 +642,7 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
     // match the tag start '<'
     TAG_BEGIN_CHAR => {
       if doc.code_in == TextNode {
-        if !doc.parse_options.use_text_string{
+        if !doc.parse_options.use_text_string {
           let content = doc.clean_chars_return();
           doc.current_node.borrow_mut().content = Some(content);
         } else {
@@ -682,7 +680,20 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
       } else {
         doc.repeat_whitespace = doc.repeat_whitespace && c.is_ascii_whitespace();
       }
-      doc.prev_chars.push(c);
+      if doc.parse_options.decode_entity {
+        // wait for complete
+        if doc.in_entity {
+          doc.entity_chars.push(c);
+        }
+        if c == '&' {
+          doc.entity_chars.push(c);
+          doc.in_entity = true;
+        } else {
+          doc.prev_chars.push(c);
+        }
+      } else {
+        doc.prev_chars.push(c);
+      }
     }
   }
   Ok(())
@@ -858,7 +869,8 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               meta.is_in_translate = false;
               doc.prev_chars.push(c);
             } else if (meta.tag_in == DoubleQuotedValue && c == '"')
-                || (meta.tag_in == SingleQuotedValue && c == '\''){
+              || (meta.tag_in == SingleQuotedValue && c == '\'')
+            {
               meta.tag_in = Wait;
               let cur_attr = meta.attrs.last_mut().expect("current attr must have");
               cur_attr.quote = Some(c);
@@ -872,8 +884,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               let cur_attr = meta.attrs.last_mut().expect("current attr must have");
               if !cur_attr.need_quote {
                 // need quote characters
-                if is_tran_slash || c.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(&c)
-                {
+                if is_tran_slash || c.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(&c) {
                   cur_attr.need_quote = true;
                 }
               }
@@ -1120,7 +1131,7 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         let node = Rc::new(RefCell::new(end));
         let mut current_node = doc.current_node.borrow_mut();
         current_node.end_tag = Some(Rc::clone(&node));
-        if !doc.parse_options.use_text_string{
+        if !doc.parse_options.use_text_string {
           let content = doc.prev_chars.clone();
           current_node.content = Some(content);
         } else {
@@ -1200,10 +1211,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
       doc.set_code_in(ExclamationBegin);
     }
     _ => {
-      return create_parse_error(
-        ErrorKind::WrongTag(c.to_string()),
-        doc.mem_position,
-      );
+      return create_parse_error(ErrorKind::WrongTag(c.to_string()), doc.mem_position);
     }
   };
   Ok(())
@@ -1305,10 +1313,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
         }
       }
       _ => {
-        return create_parse_error(
-          ErrorKind::WrongTag(doc.chars_to_string()),
-          doc.mem_position,
-        );
+        return create_parse_error(ErrorKind::WrongTag(doc.chars_to_string()), doc.mem_position);
       }
     };
     doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
@@ -1334,6 +1339,8 @@ pub struct Doc {
   current_node: RefNode,
   in_special: Option<(SpecialTag, &'static str)>,
   repeat_whitespace: bool,
+  in_entity: bool,
+  entity_chars: Vec<char>,
   check_textnode: Option<RefNode>,
   handle: NextHandle,
   pub tags: HashMap<String, RefNode>,
@@ -1370,6 +1377,8 @@ impl Doc {
       total_chars: 0,
       detect: None,
       in_special: None,
+      in_entity: false,
+      entity_chars: Vec::new(),
       root,
       parse_options: Default::default(),
       repeat_whitespace: false,
@@ -1589,10 +1598,7 @@ impl Doc {
       if let Some(childs) = &tag_node.childs {
         if !childs.is_empty() {
           for child_node in childs.iter() {
-            if let Some(childs) = parent
-            .borrow_mut()
-            .childs
-            .as_mut(){
+            if let Some(childs) = parent.borrow_mut().childs.as_mut() {
               childs.push(Rc::clone(child_node))
             };
             let mut child_node = child_node.borrow_mut();
@@ -1626,10 +1632,7 @@ impl Doc {
           .expect("tag node's meta must have")
           .borrow()
           .name;
-        return create_parse_error(
-          ErrorKind::UnclosedTag(name.to_owned()),
-          begin_at,
-        );
+        return create_parse_error(ErrorKind::UnclosedTag(name.to_owned()), begin_at);
       }
       // fix unclosed tags
       let unclosed = self.chain_nodes.split_off(1);
@@ -1640,9 +1643,9 @@ impl Doc {
     if self.code_in == TextNode {
       let mut last_node = self.current_node.borrow_mut();
       last_node.depth = 1;
-      if !self.parse_options.use_text_string{
+      if !self.parse_options.use_text_string {
         last_node.content = Some(self.prev_chars.clone());
-      }else{
+      } else {
         last_node.text = Some(self.chars_to_string());
       }
       if self.repeat_whitespace {
@@ -1659,9 +1662,8 @@ impl Doc {
     self.root.borrow_mut().end_at = self.position;
     Ok(())
   }
-  
   // return error with doc.position
-  fn error(&self, kind: ErrorKind) -> HResult{
+  fn error(&self, kind: ErrorKind) -> HResult {
     create_parse_error(kind, self.position)
   }
   // render
