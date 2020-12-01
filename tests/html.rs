@@ -57,7 +57,7 @@ fn test_pre_tag() -> HResult {
   };
   assert_eq!(doc.render(&options), r#"<pre> spaces </pre>"#);
   // mix pre and others
-  let code = r##"<Pre> abc </PRE> <a>  </a>"##; 
+  let code = r##"<Pre> abc </PRE> <a>  </a>"##;
   let doc = parse(code)?;
   let options = RenderOptions {
     lowercase_tagname: true,
@@ -365,7 +365,7 @@ fn test_self_closing() -> HResult {
 }
 
 #[test]
-fn test_wrong_tag(){
+fn test_wrong_tag() {
   let code = r##"<abc#def>"##;
   let result = parse(code);
   assert!(result.is_err());
@@ -376,22 +376,21 @@ fn test_wrong_tag(){
 }
 
 #[test]
-fn test_wrong_endtag(){
+fn test_wrong_endtag() {
   let code = r##"<a>something</b>"##;
   let result = parse(code);
   assert!(result.is_err());
 }
 
 #[test]
-fn test_unexpect_char(){
+fn test_unexpect_char() {
   let code = r##"<a class="" /]"##;
   let result = parse(code);
   assert!(result.is_err());
 }
 
-
 #[test]
-fn test_unclosed_tag(){
+fn test_unclosed_tag() {
   let code = r##"<a><b></b>"##;
   let result = parse(code);
   assert!(result.is_err());
@@ -402,46 +401,60 @@ fn test_unclosed_tag(){
 }
 
 #[test]
-fn test_attr_nospace_splitor(){
+fn test_attr_nospace_splitor() {
   let code = r##"<a readonly"title"></a>"##;
   let result = parse(code);
   assert!(result.is_err());
 }
 
 #[test]
-fn test_wrong_doctype(){
+fn test_wrong_doctype() {
   let code = r##"<!DOCTYP html>"##;
   let result = parse(code);
   assert!(result.is_err());
 }
 
 #[test]
-fn test_case_senstive() -> HResult{
+fn test_case_senstive() -> HResult {
   let code = r##"<A></a>"##;
-  let result = Doc::parse(code, ParseOptions{
-    case_sensitive_tagname: true,
-    ..Default::default()
-  });
+  let result = Doc::parse(
+    code,
+    ParseOptions {
+      case_sensitive_tagname: true,
+      ..Default::default()
+    },
+  );
   assert!(result.is_err());
   // self close, allow lowercase or uppercase
   let code = r##"<META>"##;
-  let doc = Doc::parse(code, ParseOptions{
-    case_sensitive_tagname: true,
-    ..Default::default()
-  })?;
+  let doc = Doc::parse(
+    code,
+    ParseOptions {
+      case_sensitive_tagname: true,
+      ..Default::default()
+    },
+  )?;
   assert_eq!(render(&doc), code);
   Ok(())
 }
 
 #[test]
-fn test_use_text_string() -> HResult{
-  let code = r##"<div>abc</div>def<script>var a;</script>"##;
-  let doc = Doc::parse(code, ParseOptions{
-    use_text_string: true,
-    ..Default::default()
-  })?;
-  assert_eq!(doc.nodes[2].borrow().text, Some("abc".to_string()));
-  assert_eq!(doc.nodes[4].borrow().text, Some("def".to_string()));
-  assert_eq!(doc.nodes[5].borrow().text, Some("var a;".to_string()));
+fn test_decode_entity() -> HResult {
+  let code = r##"<div>&;&lt;span&#;&gt;&#60;/span&#x3e;&#xabc</div>"##;
+  let doc = Doc::parse(
+    code,
+    ParseOptions {
+      decode_entity: true,
+      ..Default::default()
+    },
+  )?;
+  assert_eq!(
+    doc.nodes[2]
+      .borrow()
+      .content
+      .as_ref()
+      .map(|v| v.iter().collect::<String>()),
+    Some("&;<span&#;></span>&#xabc".to_string())
+  );
   Ok(())
 }

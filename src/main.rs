@@ -26,11 +26,14 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"<Pre> abc </PRE> aaa "##;
-  let result = Doc::parse(code, ParseOptions{
-    use_text_string: true,
-    ..Default::default()
-  })?;
+  let code = r##"<div>&;&lt;span&#;&gt;&#60;span&#x3e;&#xabc</div>"##;
+  let result = Doc::parse(
+    code,
+    ParseOptions {
+      decode_entity: true,
+      ..Default::default()
+    },
+  )?;
   println!("result:{:?}", result.nodes);
   Ok(())
 }

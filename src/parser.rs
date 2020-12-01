@@ -1,5 +1,6 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
+use htmlentity::entity::Entity;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -642,14 +643,12 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
     // match the tag start '<'
     TAG_BEGIN_CHAR => {
       if doc.code_in == TextNode {
-        if !doc.parse_options.use_text_string {
-          let content = doc.clean_chars_return();
-          doc.current_node.borrow_mut().content = Some(content);
-        } else {
-          let content = doc.chars_to_string();
-          doc.prev_chars.clear();
-          doc.current_node.borrow_mut().text = Some(content);
+        // finish entity
+        if doc.in_entity {
+          doc.end_entity();
         }
+        let content = doc.clean_chars_return();
+        doc.current_node.borrow_mut().content = Some(content);
         doc.check_textnode = if doc.repeat_whitespace {
           Some(Rc::clone(&doc.current_node))
         } else {
@@ -681,15 +680,20 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
         doc.repeat_whitespace = doc.repeat_whitespace && c.is_ascii_whitespace();
       }
       if doc.parse_options.decode_entity {
-        // wait for complete
-        if doc.in_entity {
-          doc.entity_chars.push(c);
-        }
-        if c == '&' {
-          doc.entity_chars.push(c);
-          doc.in_entity = true;
+        if !doc.in_entity {
+          if doc.entity.add(c) {
+            doc.in_entity = true;
+          } else {
+            doc.prev_chars.push(c);
+          }
         } else {
-          doc.prev_chars.push(c);
+          let is_entity_ok = doc.entity.add(c);
+          if !is_entity_ok {
+            doc.end_entity();
+            doc.prev_chars.push(c);
+          } else if doc.entity.is_end {
+            doc.end_entity();
+          }
         }
       } else {
         doc.prev_chars.push(c);
@@ -1131,13 +1135,8 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         let node = Rc::new(RefCell::new(end));
         let mut current_node = doc.current_node.borrow_mut();
         current_node.end_tag = Some(Rc::clone(&node));
-        if !doc.parse_options.use_text_string {
-          let content = doc.prev_chars.clone();
-          current_node.content = Some(content);
-        } else {
-          let content = doc.chars_to_string();
-          current_node.text = Some(content);
-        }
+        let content = doc.prev_chars.clone();
+        current_node.content = Some(content);
         doc.prev_chars.clear();
         doc.nodes.push(node);
         // remove current tag
@@ -1340,7 +1339,7 @@ pub struct Doc {
   in_special: Option<(SpecialTag, &'static str)>,
   repeat_whitespace: bool,
   in_entity: bool,
-  entity_chars: Vec<char>,
+  entity: Entity,
   check_textnode: Option<RefNode>,
   handle: NextHandle,
   pub tags: HashMap<String, RefNode>,
@@ -1378,7 +1377,7 @@ impl Doc {
       detect: None,
       in_special: None,
       in_entity: false,
-      entity_chars: Vec::new(),
+      entity: Entity::new(),
       root,
       parse_options: Default::default(),
       repeat_whitespace: false,
@@ -1444,6 +1443,12 @@ impl Doc {
     let mut content: Vec<char> = Vec::with_capacity(self.prev_chars.len());
     content.append(&mut self.prev_chars);
     content
+  }
+  // finish entity
+  fn end_entity(&mut self) {
+    self.prev_chars.extend(self.entity.get_chars());
+    self.in_entity = false;
+    self.entity = Entity::new();
   }
   // set code_in
   fn set_code_in(&mut self, code_in: CodeTypeIn) {
@@ -1643,11 +1648,7 @@ impl Doc {
     if self.code_in == TextNode {
       let mut last_node = self.current_node.borrow_mut();
       last_node.depth = 1;
-      if !self.parse_options.use_text_string {
-        last_node.content = Some(self.prev_chars.clone());
-      } else {
-        last_node.text = Some(self.chars_to_string());
-      }
+      last_node.content = Some(self.prev_chars.clone());
       if self.repeat_whitespace {
         last_node.node_type = NodeType::SpacesBetweenTag;
       }

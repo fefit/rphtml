@@ -19,7 +19,6 @@ export type IJsNodeTree = {
   node_type: number;
   begin_at: CodePosAt;
   end_at: CodePosAt;
-  text?: string;
   content?: Array<string>;
   end_tag?: IJsNodeTree;
   meta?: IJsNodeTagMeta;

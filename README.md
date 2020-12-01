@@ -101,7 +101,7 @@ type IJsParserOptions = {
   allow_self_closing?: boolean;
   allow_fix_unclose?: boolean;
   case_sensitive_tagname?: boolean;
-  use_text_string?: boolean;
+  decode_entity?: boolean;
 };
 ```
 
@@ -123,11 +123,11 @@ type IJsParserOptions = {
 
   tag 标签是否区分大小写，区分大小写的情况下，`<div>`和`<DIV>` 将视作不同的标签，将影响标签的配对。
 
-- `use_text_string`
+- `decode_entity`
 
-  if true, the Node's text content will return a `text` field with all characters, otherwise will return a `content` field which is a character array.
+  if true, will decode the entity text to an unicode character.
 
-  对于文本节点、script/style 标签等文本部分是否返回整个字符串，为 true 的话，将把整个字符串保存在`text`字段内;否则保存在`content`字段内，`content`是所有文本部分字符的一个数组。
+  是否 decode 文本中的实体为一个 unicode 字符。
 
 ---
 
@@ -214,7 +214,6 @@ type IJsNodeTree = {
   node_type: NodeType;
   begin_at: CodePosAt;
   end_at: CodePosAt;
-  text?: string; // if use_text_string is true, return string instead of content character array.
   content?: Array<string>; // content character
   end_tag?: IJsNodeTree; // the closed tag
   meta?: IJsNodeTagMeta; // tag meta information.

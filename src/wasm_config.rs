@@ -13,7 +13,6 @@ export interface IJsParseOptions {
   allow_fix_unclose?: boolean;
   allow_self_closing?: boolean;
   case_sensitive_tagname?: boolean;
-  use_text_string?: boolean;
   decode_entity?: boolean;
 }
 "#;
@@ -43,7 +42,6 @@ pub struct JsParseOptions {
   pub case_sensitive_tagname: Option<bool>,
   pub allow_self_closing: Option<bool>,
   pub allow_fix_unclose: Option<bool>,
-  pub use_text_string: Option<bool>,
   pub decode_entity: Option<bool>,
 }
 
@@ -62,7 +60,6 @@ impl From<JsParseOptions> for ParseOptions {
       case_sensitive_tagname: optional_bool(options.case_sensitive_tagname),
       allow_self_closing: optional_bool(options.allow_self_closing),
       allow_fix_unclose: optional_bool(options.allow_fix_unclose),
-      use_text_string: optional_bool(options.use_text_string),
       decode_entity: optional_bool(options.decode_entity),
     }
   }
