@@ -458,3 +458,14 @@ fn test_decode_entity() -> HResult {
   );
   Ok(())
 }
+
+#[test]
+fn test_errors() -> HResult{
+  let code = r##"<div><span>abc</span><span>def</span></div>"##;
+  let doc = parse(code)?;
+  doc.render_tree(&RenderOptions{
+    inner_html: true,
+    ..Default::default()
+  });
+  Ok(())
+}

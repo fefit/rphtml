@@ -1,6 +1,6 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
-use htmlentity::entity::Entity;
+use htmlentity::entity::{ Entity, EncodeType, encode_with};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -26,6 +26,7 @@ const TAG_END_CHAR: char = '>';
 const ALLOC_CHAR_CAPACITY: usize = 50;
 const ALLOC_NODES_CAPACITY: usize = 20;
 
+pub type RenderEncoderOption = Box<dyn Fn(char) -> Option<EncodeType>>;
 #[derive(Debug)]
 pub struct ParseError {
   pub position: CodePosAt,
@@ -156,6 +157,15 @@ fn get_content(content: &Option<Vec<char>>) -> String {
   }
 }
 
+fn get_content_encoder(content: &Option<Vec<char>>, encoder: Option<RenderEncoderOption>) -> String {
+  let encode_fn = encoder.unwrap_or(Box::new(|_ch:char|None));
+  match content {
+    Some(content) => content.iter().map(|ch|{
+      encode_with(ch.to_string().as_str(), &encode_fn)
+    }).collect::<String>(),
+    _ => String::from(""),
+  }
+}
 /**
  * the doc's position
 */

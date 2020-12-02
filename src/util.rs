@@ -27,16 +27,12 @@ pub fn is_identity(chars: &[char]) -> bool {
  * https://infra.spec.whatwg.org/#noncharacter
 */
 pub fn is_non_character(ch: &char) -> bool {
-  match ch {
-    '\u{FDD0}'..='\u{FDEF}' => true,
-    '\u{FFFE}' | '\u{FFFF}' | '\u{1FFFE}' | '\u{1FFFF}' | '\u{2FFFE}' | '\u{2FFFF}'
-    | '\u{3FFFE}' | '\u{3FFFF}' | '\u{4FFFE}' | '\u{4FFFF}' | '\u{5FFFE}' | '\u{5FFFF}'
-    | '\u{6FFFE}' | '\u{6FFFF}' | '\u{7FFFE}' | '\u{7FFFF}' | '\u{8FFFE}' | '\u{8FFFF}'
-    | '\u{9FFFE}' | '\u{9FFFF}' | '\u{AFFFE}' | '\u{AFFFF}' | '\u{BFFFE}' | '\u{BFFFF}'
-    | '\u{CFFFE}' | '\u{CFFFF}' | '\u{DFFFE}' | '\u{DFFFF}' | '\u{EFFFE}' | '\u{EFFFF}'
-    | '\u{FFFFE}' | '\u{FFFFF}' | '\u{10FFFE}' | '\u{10FFFF}' => true,
-    _ => false,
-  }
+  matches!(ch, '\u{FDD0}'..='\u{FDEF}' | '\u{FFFE}' | '\u{FFFF}' | '\u{1FFFE}' | '\u{1FFFF}' | '\u{2FFFE}' | '\u{2FFFF}'
+  | '\u{3FFFE}' | '\u{3FFFF}' | '\u{4FFFE}' | '\u{4FFFF}' | '\u{5FFFE}' | '\u{5FFFF}'
+  | '\u{6FFFE}' | '\u{6FFFF}' | '\u{7FFFE}' | '\u{7FFFF}' | '\u{8FFFE}' | '\u{8FFFF}'
+  | '\u{9FFFE}' | '\u{9FFFF}' | '\u{AFFFE}' | '\u{AFFFF}' | '\u{BFFFE}' | '\u{BFFFF}'
+  | '\u{CFFFE}' | '\u{CFFFF}' | '\u{DFFFE}' | '\u{DFFFF}' | '\u{EFFFE}' | '\u{EFFFF}'
+  | '\u{FFFFE}' | '\u{FFFFF}' | '\u{10FFFE}' | '\u{10FFFF}')
 }
 
 /**
@@ -48,20 +44,12 @@ pub fn is_char_available_in_key(ch: &char) -> bool {
   if ch.is_ascii_whitespace() || ch.is_ascii_control() || is_non_character(ch) {
     return false;
   }
-  match ch {
-    '\u{0000}' => false,
-    '"' | '\'' | '>' | '/' | '=' => false,
-    _ => true,
-  }
+  !matches!(ch, '\u{0000}' | '"' | '\'' | '>' | '/' | '=')
 }
 
 pub fn is_char_available_in_value(ch: &char) -> bool {
   if ch.is_ascii_whitespace() {
     return false;
   }
-  match ch {
-    '\u{0000}' => false,
-    '"' | '\'' | '<' | '>' | '/' | '=' | '`' => false,
-    _ => true,
-  }
+  !matches!(ch, '\u{0000}'|'"' | '\'' | '<' | '>' | '/' | '=' | '`')
 }
