@@ -1,6 +1,6 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
-use htmlentity::entity::{ Entity, EncodeType, encode_with};
+use htmlentity::entity::{encode_with, EncodeType, Entity};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -157,12 +157,12 @@ fn get_content(content: &Option<Vec<char>>) -> String {
   }
 }
 
-fn get_content_encoder(content: &Option<Vec<char>>, encoder: Option<RenderEncoderOption>) -> String {
-  let encode_fn = encoder.unwrap_or(Box::new(|_ch:char|None));
+fn get_content_encoder(content: &Option<Vec<char>>, encoder: &RenderEncoderOption) -> String {
   match content {
-    Some(content) => content.iter().map(|ch|{
-      encode_with(ch.to_string().as_str(), &encode_fn)
-    }).collect::<String>(),
+    Some(content) => content
+      .iter()
+      .map(|ch| encode_with(ch.to_string().as_str(), encoder))
+      .collect::<String>(),
     _ => String::from(""),
   }
 }
@@ -337,7 +337,11 @@ impl Default for TagCodeIn {
 }
 
 pub type RefNode = Rc<RefCell<Node>>;
-
+#[derive(Default)]
+struct RenderStatus {
+  is_inner_html: bool,
+  is_in_pre: bool,
+}
 /**
  *
  */
@@ -407,13 +411,12 @@ impl Node {
     }
   }
   // build node
-  fn build_node(
-    &self,
-    options: &RenderOptions,
-    mut is_in_pre: bool,
-    is_inner_html: bool,
-  ) -> (String, bool) {
+  fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus) -> String {
     let mut result = String::from("");
+    let RenderStatus {
+      is_in_pre,
+      is_inner_html,
+    } = *status;
     use NodeType::*;
     match self.node_type {
       Text | SpacesBetweenTag => {
@@ -422,6 +425,13 @@ impl Node {
             // spaces between tag,just remove it
           } else {
             let mut prev_is_space = false;
+            let need_encode = options.encoder.is_some();
+            let noop = Box::new(|_ch: char| None) as RenderEncoderOption;
+            let encoder = if need_encode {
+              options.encoder.as_ref().unwrap()
+            } else {
+              &noop
+            };
             for &c in self.content.as_ref().unwrap().iter() {
               if c.is_ascii_whitespace() {
                 if prev_is_space {
@@ -431,12 +441,20 @@ impl Node {
                 result.push(' ');
               } else {
                 prev_is_space = false;
-                result.push(c);
+                if !need_encode {
+                  result.push(c);
+                } else {
+                  result.push_str(&encode_with(c.to_string().as_str(), encoder));
+                }
               }
             }
           }
         } else {
-          let content = get_content(&self.content);
+          let content = if options.encoder.is_some() {
+            get_content_encoder(&self.content, options.encoder.as_ref().unwrap())
+          } else {
+            get_content(&self.content)
+          };
           result.push_str(content.as_str());
         }
       }
@@ -448,7 +466,7 @@ impl Node {
           .borrow();
         let tag_name = meta.get_name(options.lowercase_tagname);
         // check if is in pre, only check if not in pre
-        is_in_pre = is_in_pre || {
+        status.is_in_pre = is_in_pre || {
           if options.lowercase_tagname {
             tag_name == "pre"
           } else {
@@ -481,10 +499,10 @@ impl Node {
         if options.lowercase_tagname {
           content = content.to_lowercase();
           if is_in_pre && content == "pre" {
-            is_in_pre = false;
+            status.is_in_pre = false;
           }
         } else if is_in_pre && content.to_lowercase() == "pre" {
-          is_in_pre = false;
+          status.is_in_pre = false;
         }
         if !is_inner_html {
           content = format!("</{}>", content);
@@ -518,65 +536,76 @@ impl Node {
       }
       _ => {}
     }
-    (result, is_in_pre)
+    result
   }
   // build node tree
-  fn build_tree(
-    &self,
-    options: &RenderOptions,
-    mut is_in_pre: bool,
-    is_inner_html: bool,
-  ) -> (String, bool) {
+  fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus) -> String {
     let mut result = String::with_capacity(ALLOC_CHAR_CAPACITY);
-    use NodeType::*;
-    let mut need_child_inner_html = false;
-    if self.node_type != AbstractRoot {
-      let (content, now_in_pre) = self.build_node(options, is_in_pre, is_inner_html);
-      result.push_str(content.as_str());
-      is_in_pre = now_in_pre;
-    } else {
-      need_child_inner_html = is_inner_html;
-    }
+    let content = self.build_node(options, status);
+    result.push_str(content.as_str());
     if let Some(childs) = &self.childs {
-      let mut find_tag = false;
       for child in childs {
         let child = child.borrow();
-        let is_inner_html = if need_child_inner_html {
-          if child.node_type == NodeType::Tag {
-            // only allow only child tag
-            if find_tag {
-              panic!(
-                "the `inner_html` render option can only used for single tag,redundancy tag finded '{}' at {:?}",
-                child.meta.as_ref().unwrap().borrow().name,
-                child.begin_at
-              );
-            }
-            find_tag = true;
-            true
-          } else {
-            false
-          }
-        } else {
-          false
-        };
-        let (content, now_in_pre) = child.build_tree(options, is_in_pre, is_inner_html);
+        let content = child.build_tree(
+          options,
+          &mut RenderStatus {
+            is_inner_html: false,
+            ..(*status)
+          },
+        );
         result.push_str(content.as_str());
-        is_in_pre = now_in_pre;
       }
     }
     if let Some(end_tag) = &self.end_tag {
-      let (content, now_in_pre) = end_tag
-        .borrow()
-        .build_node(options, is_in_pre, is_inner_html);
+      let content = end_tag.borrow().build_node(options, status);
       result.push_str(content.as_str());
-      is_in_pre = now_in_pre
     }
-    (result, is_in_pre)
+    result
   }
   // build
   pub fn build(&self, options: &RenderOptions) -> String {
-    let (content, _) = self.build_tree(options, false, options.inner_html);
-    content
+    if !options.inner_html {
+      return self.build_tree(options, &mut Default::default());
+    }
+    let throw_wrong_node = |node_type: &NodeType| -> ! {
+      panic!(
+        "`inner_html` should only used for tag node, but found '{:?}'",
+        node_type
+      );
+    };
+    let status = &mut RenderStatus {
+      is_inner_html: options.inner_html,
+      ..Default::default()
+    };
+    if self.node_type == NodeType::AbstractRoot {
+      // inner html for abstract root
+      if let Some(childs) = &self.childs {
+        let mut finded = false;
+        let mut child_node: Option<Rc<RefCell<Node>>> = None;
+        for child in childs {
+          if child.borrow().node_type == NodeType::Tag {
+            if finded {
+              panic!(
+                "`inner_html` can't used in abstract root node which has multiple tag node childs."
+              );
+            }
+            child_node = Some(Rc::clone(&child));
+            finded = true;
+          }
+        }
+        if let Some(child_node) = child_node {
+          return child_node.borrow().build_tree(options, status);
+        }
+        // no tag child node finded
+        throw_wrong_node(&childs[childs.len() - 1].borrow().node_type);
+      }
+      // abstract without any child
+      return String::from("");
+    }
+    if self.node_type != NodeType::Tag {
+      throw_wrong_node(&self.node_type);
+    }
+    self.build_tree(options, status)
   }
 }
 
@@ -1680,12 +1709,11 @@ impl Doc {
   // render
   pub fn render(&self, options: &RenderOptions) -> String {
     let mut result = String::with_capacity(self.total_chars);
-    let mut is_in_pre = false;
     if !options.inner_html {
+      let mut status: RenderStatus = Default::default();
       for node in &self.nodes[1..] {
-        let (content, now_in_pre) = node.borrow().build_node(options, is_in_pre, false);
+        let content = node.borrow().build_node(options, &mut status);
         result.push_str(content.as_str());
-        is_in_pre = now_in_pre;
       }
       result
     } else {

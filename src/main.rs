@@ -1,6 +1,7 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use std::error::Error;
+use std::rc::Rc;
 use std::{env, fs};
 fn main() -> Result<(), Box<dyn Error>> {
   // let current_dir = env::current_dir()?;
@@ -26,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"<div>&;&lt;span&#;&gt;&#60;span&#x3e;&#xabc</div>"##;
+  let code = r##"<div><span>abc</span><span>def</span></div>"##;
   let result = Doc::parse(
     code,
     ParseOptions {
@@ -34,6 +35,15 @@ fn main() -> Result<(), Box<dyn Error>> {
       ..Default::default()
     },
   )?;
-  println!("result:{:?}", result.nodes);
+  println!(
+    "result:{:?}",
+    Doc::render_js_tree(
+      Rc::clone(&result.nodes[1]),
+      &RenderOptions {
+        inner_html: true,
+        ..Default::default()
+      }
+    )
+  );
   Ok(())
 }

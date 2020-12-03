@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::parser::RenderEncoderOption;
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ParseOptions {
   pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
@@ -18,5 +19,5 @@ pub struct RenderOptions {
   pub always_close_void: bool,
   pub inner_html: bool,
   #[serde(skip_serializing, skip_deserializing)]
-  pub encoder: Option<RenderEncoderOption>
+  pub encoder: Option<RenderEncoderOption>,
 }

@@ -94,6 +94,7 @@ impl From<JsRenderOptions> for RenderOptions {
       remove_comment: optional_bool(options.remove_comment),
       always_close_void: optional_bool(options.always_close_void),
       inner_html: optional_bool(options.inner_html),
+      encoder: None,
     }
   }
 }

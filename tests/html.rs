@@ -1,3 +1,4 @@
+use htmlentity::entity::EncodeType;
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use std::error::Error;
@@ -315,6 +316,17 @@ fn test_inner_html() -> HResult {
   assert_eq!(render(&doc), code);
   Ok(())
 }
+#[test]
+#[should_panic]
+fn test_wrong_inner_html() {
+  let code = "abc";
+  let doc = parse(code).unwrap();
+  doc.render(&RenderOptions {
+    inner_html: true,
+    minify_spaces: true,
+    ..Default::default()
+  });
+}
 
 #[test]
 fn test_minify_spaces() -> HResult {
@@ -460,12 +472,18 @@ fn test_decode_entity() -> HResult {
 }
 
 #[test]
-fn test_errors() -> HResult{
-  let code = r##"<div><span>abc</span><span>def</span></div>"##;
+fn test_render_encoder() -> HResult {
+  let code = r##"<div><span>'"</span></div>"##;
   let doc = parse(code)?;
-  doc.render_tree(&RenderOptions{
-    inner_html: true,
+  let render_code = doc.render(&RenderOptions {
+    encoder: Some(Box::new(|ch: char| {
+      if ch == '\'' {
+        return Some(EncodeType::Named);
+      }
+      None
+    })),
     ..Default::default()
   });
+  assert_eq!(render_code, "<div><span>&apos;\"</span></div>");
   Ok(())
 }
