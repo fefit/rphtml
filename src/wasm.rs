@@ -1,5 +1,4 @@
 #![cfg(target_arch = "wasm32")]
-use crate::config::RenderOptions;
 use crate::parser::{Doc, NodeType, RefNode};
 use crate::wasm_config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
 use serde::{Deserialize, Serialize};
@@ -113,30 +112,6 @@ impl IJsNode {
     Ok(JsValue::from_str(result.as_str()).into())
   }
 
-  #[wasm_bindgen(js_name = renderEncoder)]
-  pub fn render_encoder(
-    &self,
-    encoder: &js_sys::Function,
-    options: Option<IJsRenderOptions>,
-  ) -> Result<IJsString, JsValue> {
-    let options: JsRenderOptions = options.map_or(Default::default(), |options| options.into());
-    let mut options: RenderOptions = options.into();
-    let callback = Box::new(|ch: char| -> Option<EncodeType> {
-      let value: u8 = encoder
-        .call1(&JsValue::null(), &JsValue::from_str(&ch.to_string()))
-        .ok()?
-        .as_f64()
-        .unwrap_or(0.0) as u8;
-      let encode_type: EncodeType = value.into();
-      match encode_type {
-        EncodeType::Ignore => None,
-        _ => Some(encode_type),
-      }
-    }) as Box<dyn Fn(char) -> Option<EncodeType>>;
-    options.encoder = Some(callback);
-    let result = Doc::render_js_tree(Rc::clone(&self.root), &options);
-    Ok(JsValue::from_str(result.as_str()).into())
-  }
 
   #[wasm_bindgen(js_name = getTagByUuid)]
   pub fn get_tag_by_uuid(&self, uuid: &str) -> Result<Option<IJsNode>, JsValue> {

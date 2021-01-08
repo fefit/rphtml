@@ -269,6 +269,9 @@ impl Attr {
     }
     ret
   }
+  pub fn need_quoted_char(ch: &char)->bool{
+    ch.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(ch)
+  }
 }
 /**
  * Tag
@@ -307,7 +310,7 @@ impl TagMeta {
       self.name.clone()
     }
   }
-  pub fn get_attrs(&self, remove_quote: bool) -> String {
+  pub fn attrs_to_string(&self, remove_quote: bool) -> String {
     let segs: Vec<String> = self
       .attrs
       .iter()
@@ -474,7 +477,7 @@ impl Node {
           }
         };
         if !is_inner_html {
-          let attrs = meta.get_attrs(options.remove_attr_quote);
+          let attrs = meta.attrs_to_string(options.remove_attr_quote);
           let tag = format!("<{}{}", tag_name, attrs);
           result.push_str(tag.as_str());
           // add self closing
@@ -518,7 +521,7 @@ impl Node {
         let content = format!(
           "<!{}{}>",
           meta.name,
-          meta.get_attrs(options.remove_attr_quote)
+          meta.attrs_to_string(options.remove_attr_quote)
         );
         result.push_str(content.as_str());
       }
@@ -927,7 +930,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               let cur_attr = meta.attrs.last_mut().expect("current attr must have");
               if !cur_attr.need_quote {
                 // need quote characters
-                if is_tran_slash || c.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(&c) {
+                if is_tran_slash || Attr::need_quoted_char(&c) {
                   cur_attr.need_quote = true;
                 }
               }
