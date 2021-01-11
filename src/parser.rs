@@ -1,5 +1,6 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
+
 use htmlentity::entity::{encode_with, EncodeType, Entity};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -269,8 +270,20 @@ impl Attr {
     }
     ret
   }
+  // check if the char need quote
   pub fn need_quoted_char(ch: &char)->bool{
     ch.is_ascii_whitespace() || MUST_QUOTE_ATTR_CHARS.contains(ch)
+  }
+  // check if id
+  pub fn check_if_id(&self)-> Option<String>{
+    if let Some(key) = &self.key{
+      if key.content.to_ascii_lowercase() == "id"{
+        if let Some(value) = &self.value{
+          return Some(value.content.trim().into()); 
+        }
+      }
+    }
+    None
   }
 }
 /**
@@ -348,7 +361,7 @@ struct RenderStatus {
 /**
  *
  */
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Node {
   // if a tag node, add a index to the node
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,16 +384,16 @@ pub struct Node {
   pub end_tag: Option<RefNode>,
 
   // parent node, use weak reference,prevent reference loop
-  #[serde(skip_serializing)]
+  #[serde(skip_serializing, skip_deserializing)]
   pub parent: Option<Weak<RefCell<Node>>>,
+
+  // owner document
+  #[serde(skip_serializing, skip_deserializing)]
+  pub owner_document: Option<Weak<Doc>>,
 
   // the content,for text/comment/style/script nodes
   #[serde(skip_serializing_if = "Option::is_none")]
   pub content: Option<Vec<char>>,
-
-  // the text, same as content, but use string instead of Vec<char>
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub text: Option<String>,
 
   // the child nodes
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -395,6 +408,21 @@ pub struct Node {
   pub special: Option<SpecialTag>,
 }
 
+impl fmt::Debug for Node{
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.debug_struct("Node")
+      .field("uuid", &self.uuid)
+      .field("node_type", &self.node_type)
+      .field("begin_at", &self.begin_at)
+      .field("end_at", &self.end_at)
+      .field("content", &self.content)
+      .field("childs", &self.childs)
+      .field("meta", &self.meta)
+      .field("special", &self.special)
+      .finish()
+  }
+}
+
 impl Node {
   // create a new node
   pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
@@ -405,12 +433,12 @@ impl Node {
       end_tag: None,
       parent: None,
       content: None,
-      text: None,
       childs: None,
       meta: None,
       uuid: None,
       depth: 0,
       special: None,
+      owner_document: None
     }
   }
   // build node
@@ -755,6 +783,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
   // void elements
   let mut is_void_element = false;
   let mut is_node_end = false;
+  let mut id_name: Option<String> = None;
   {
     let mut current_node = doc.current_node.borrow_mut();
     match current_node.meta.as_mut() {
@@ -904,7 +933,9 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               } else {
                 let attr_data = doc.make_attr_data(value);
                 cur_attr.value = Some(attr_data);
-              };
+                // check if id tag
+                id_name = cur_attr.check_if_id();
+              }
               doc.prev_chars.clear();
               meta.tag_in = Wait;
             }
@@ -921,6 +952,8 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
               let cur_attr = meta.attrs.last_mut().expect("current attr must have");
               cur_attr.quote = Some(c);
               cur_attr.value = Some(doc.make_attr_data(doc.chars_to_string()));
+              // check if id tag
+              id_name = cur_attr.check_if_id();
               doc.prev_chars.clear();
             } else {
               let is_tran_slash = c == '\\';
@@ -984,6 +1017,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
         }
       }
     }
+  }
+  // add id tag to tags
+  if let Some(name) = id_name{
+    doc.id_tags.insert(name, Rc::clone(&doc.current_node));
   }
   if is_node_end {
     doc.set_tag_end_info();
@@ -1180,7 +1217,6 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
         let content = doc.prev_chars.clone();
         current_node.content = Some(content);
         doc.prev_chars.clear();
-        doc.nodes.push(node);
         // remove current tag
         doc.chain_nodes.pop();
         doc.detect = None;
@@ -1384,6 +1420,7 @@ pub struct Doc {
   entity: Entity,
   check_textnode: Option<RefNode>,
   handle: NextHandle,
+  pub id_tags: HashMap<String, RefNode>,
   pub tags: HashMap<String, RefNode>,
   pub total_chars: usize,
   pub parse_options: ParseOptions,
@@ -1414,6 +1451,7 @@ impl Doc {
       nodes,
       chain_nodes,
       current_node,
+      id_tags: HashMap::new(),
       tags: HashMap::new(),
       total_chars: 0,
       detect: None,
@@ -1424,7 +1462,7 @@ impl Doc {
       parse_options: Default::default(),
       repeat_whitespace: false,
       check_textnode: None,
-      handle: noop,
+      handle: noop
     };
     doc.init();
     doc

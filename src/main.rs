@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //     };
   //   }
   // }
-  let code = r##"<div><span>abc</span><span>def</span></div>"##;
+  let code = r##"<div ><span>abc</span><span id="haha">def</span></div>"##;
   let result = Doc::parse(
     code,
     ParseOptions {
@@ -35,15 +35,16 @@ fn main() -> Result<(), Box<dyn Error>> {
       ..Default::default()
     },
   )?;
-  println!(
-    "result:{:?}",
-    Doc::render_js_tree(
-      Rc::clone(&result.nodes[1]),
-      &RenderOptions {
-        inner_html: true,
-        ..Default::default()
-      }
-    )
-  );
+  println!("{:?}", result.id_tags);
+  // println!(
+  //   "result:{:?}",
+  //   Doc::render_js_tree(
+  //     Rc::clone(&result.nodes[1]),
+  //     &RenderOptions {
+  //       inner_html: true,
+  //       ..Default::default()
+  //     }
+  //   )
+  // );
   Ok(())
 }
