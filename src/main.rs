@@ -27,15 +27,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 	//     };
 	//   }
 	// }
-	let code = r##"<div>affg<div> tags are allowed here</div>def</div>"##;
+	let code = r##"<div>affg</div><div> tags are allowed here</div><div>def</div>"##;
 	// let code = format!("<script>{}</script>", code);
 	let doc = Doc::parse(
 		code,
 		ParseOptions {
 			..Default::default()
 		},
-	)?;
-	println!("{:?}", doc.nodes);
+  )?;
+  if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs{
+    Node::remove(&childs[0]);
+  }
 	// println!("{:?}", result.root.borrow().id_tags);
 	println!(
 		"result:{:?}",

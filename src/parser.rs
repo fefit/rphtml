@@ -658,8 +658,34 @@ impl Node {
 			}
 		}
 		self.build_tree(options, status)
-	}
+  }
+  // check if alone tag
+  pub fn is_alone_tag(&self)->bool{
+    if let Some(childs) = &self.childs {
+      match childs.len() {
+        1 => childs[0].borrow().node_type == NodeType::Text,
+        num => {
+          if num <= 3 {
+            return childs.iter().all(|child| {
+              let node_type = child.borrow().node_type;
+              node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
+            });
+          }
+          false
+        }
+      }
+    } else {
+      self.node_type == NodeType::Tag
+    }
+  }
+  // append a child
+  // remove
+  // check if two RefNode is same
+  pub fn is_same(cur: &RefNode, other: &RefNode) -> bool{
+    std::ptr::eq(cur.as_ptr() as *const _, other.as_ptr() as *const _)
+  }
 }
+
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq)]
 pub enum SpecialTag {
@@ -1243,7 +1269,6 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 				let content = doc.prev_chars.clone();
 				current_node.content = Some(content);
 				doc.prev_chars.clear();
-				doc.nodes.push(node);
 				// remove current tag
 				doc.chain_nodes.pop();
 				doc.detect = None;
@@ -1454,11 +1479,11 @@ pub struct Doc {
 	handle: NextHandle,
 	pub total_chars: usize,
 	pub parse_options: ParseOptions,
-	pub nodes: Vec<RefNode>,
 	pub root: Rc<RefCell<RootNode>>,
 }
 
 pub type StringNodeMap = HashMap<String, RefNode>;
+#[derive(Serialize, Deserialize)]
 pub struct RootNode {
 	pub node: Option<RefNode>,
 	pub id_tags: Rc<RefCell<StringNodeMap>>,
@@ -1466,7 +1491,10 @@ pub struct RootNode {
 }
 
 impl RootNode {
-	fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
+  pub fn get_node(&self) -> RefNode{
+    Rc::clone(&self.node.as_ref().unwrap())
+  }
+  fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
 		map.get(query).map(|node| Rc::clone(node))
 	}
 	pub fn get_element_by_id(&self, id: &str) -> Option<RefNode> {
@@ -1509,7 +1537,6 @@ impl Doc {
 			mem_position: CodePosAt::begin(),
 			prev_char: ' ',
 			prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
-			nodes,
 			chain_nodes,
 			current_node,
 			total_chars: 0,
@@ -1533,11 +1560,19 @@ impl Doc {
 	}
 	// for serde, remove cycle reference
 	pub fn prepare_to_json(&mut self) {
-		for node in &self.nodes {
-			let mut node = node.borrow_mut();
-			node.parent = None;
-		}
-	}
+		Doc::clear_cycle_ref(&self.get_root_node());
+  }
+  
+  // clear cycle ref
+  fn clear_cycle_ref(node: &RefNode){
+    node.borrow_mut().parent = None;
+    if let Some(childs) = &node.borrow().childs{
+      for child in childs{
+        Doc::clear_cycle_ref(child);
+      }
+    }
+  }
+
 	// parse with string
 	pub fn parse(content: &str, options: ParseOptions) -> Result<Self, Box<dyn Error>> {
 		let mut doc = Doc::new();
@@ -1688,7 +1723,7 @@ impl Doc {
 			self.chain_nodes.push(Rc::clone(&node));
 		}
 		// add cur node to parent's child nodes
-		self.nodes.push(node);
+		
 	}
 	// set tag end info
 	fn set_tag_end_info(&mut self) {
@@ -1810,29 +1845,15 @@ impl Doc {
 		create_parse_error(kind, self.position)
 	}
 	pub fn get_root_node(&self) -> RefNode {
-		Rc::clone(&self.root.borrow().node.as_ref().unwrap())
+		self.root.borrow().get_node()
 	}
 	// render
 	pub fn render(&self, options: &RenderOptions) -> String {
-		let mut result = String::with_capacity(self.total_chars);
-		if !options.inner_html {
-			let mut status: RenderStatus = Default::default();
-			for node in &self.nodes[1..] {
-				let content = node.borrow().build_node(options, &mut status);
-				result.push_str(content.as_str());
-			}
-			result
-		} else {
-			self.render_tree(options)
-		}
+		self.get_root_node().borrow_mut().build(options, false)
 	}
 	// render text
 	pub fn render_text(&self, options: &RenderOptions) -> String {
 		self.get_root_node().borrow_mut().build(options, true)
-	}
-	// render tree
-	pub fn render_tree(&self, options: &RenderOptions) -> String {
-		self.get_root_node().borrow_mut().build(options, false)
 	}
 	// render for js
 	pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {

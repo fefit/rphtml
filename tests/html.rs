@@ -38,9 +38,14 @@ fn test_doctype() -> HResult {
 fn test_pre_tag() -> HResult {
 	// test pre special
 	let doc = parse("<pre>text in prev</pre><div></div>")?;
-	let text_node = doc.nodes[2].borrow();
-	let text_in_pre = matches!(text_node.special, Some(SpecialTag::Pre));
-	let div_not_in_pre = doc.nodes[5].borrow().special.is_none();
+	let mut text_in_pre = false;
+  let mut div_not_in_pre = false;
+  if let Some(childs) = &doc.get_root_node().borrow().childs{
+    if let Some(text_nodes) = &childs[0].borrow().childs{
+      text_in_pre = matches!(text_nodes[0].borrow().special, Some(SpecialTag::Pre));
+    }
+    div_not_in_pre = childs[1].borrow().special.is_none();
+  }
 	assert!(text_in_pre);
 	assert!(div_not_in_pre);
 	// pre render should keep spaces
@@ -455,15 +460,17 @@ fn test_decode_entity() -> HResult {
 			decode_entity: true,
 			..Default::default()
 		},
-	)?;
-	assert_eq!(
-		doc.nodes[2]
-			.borrow()
-			.content
-			.as_ref()
-			.map(|v| v.iter().collect::<String>()),
-		Some("&;<span&#;></span>&#xabc".to_string())
-	);
+  )?;
+  let mut content: Option<String> = None;
+  if let Some(childs) = &doc.get_root_node().borrow().childs{
+    if let Some(inner_childs) = &childs[0].borrow().childs{
+      content = inner_childs[0].borrow().content.as_ref()
+      .map(|v| v.iter().collect::<String>());
+    }
+  }
+  assert_eq!(
+    content,
+    Some("&;<span&#;></span>&#xabc".to_string()));
 	Ok(())
 }
 
