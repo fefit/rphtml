@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 		},
   )?;
   if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs{
-    Node::remove(&childs[0]);
+    // Node::remove(&childs[0]);
   }
 	// println!("{:?}", result.root.borrow().id_tags);
 	println!(

@@ -124,6 +124,38 @@ lazy_static! {
 	static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
+fn is_void_tag(name: &str) -> bool{
+  VOID_ELEMENTS.contains(&name)
+}
+
+pub fn allow_insert(name:&str, node_type: NodeType) -> bool {
+  if is_void_tag(name){
+    return false;
+  }
+  use NodeType::*;
+  if let Some(special) = SPECIAL_TAG_MAP.get(name){
+    let code_in = match node_type{
+      AbstractRoot => CodeTypeIn::AbstractRoot,
+      HTMLDOCTYPE => CodeTypeIn::HTMLDOCTYPE,
+      Comment => CodeTypeIn::Comment,
+      Text | SpacesBetweenTag => CodeTypeIn::TextNode,
+      TagEnd => CodeTypeIn::TagEnd,
+      XMLCDATA=> CodeTypeIn::XMLCDATA,
+      Tag => match name{
+        "script" => CodeTypeIn::HTMLScript,
+        "style" => CodeTypeIn::HTMLStyle,
+        _ => CodeTypeIn::Tag
+      }
+    };
+    return special.is_ok(&code_in, name, ' ', CodePosAt::default()).is_ok();
+  }
+  match name{
+    "title"|"textarea" => node_type == Text || node_type == SpacesBetweenTag,
+    _ => true
+  }
+}
+
+
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
@@ -679,7 +711,49 @@ impl Node {
     }
   }
   // append a child
-  // remove
+  // is document node
+  pub fn is_document(&self)-> (bool, bool) {
+    let mut is_document = false;
+    let mut syntax_ok = true;
+    use NodeType::*;
+    if self.node_type == AbstractRoot{
+      if let Some(childs) = &self.childs{
+        let mut find_html = false;
+        for child in childs{
+          let child_node = child.borrow();
+          match child_node.node_type{
+            Comment | SpacesBetweenTag => {
+              // allowed in document
+            }
+            Tag => {
+              if find_html{
+                syntax_ok = false;
+              } else {
+                // check if is html tag
+                if let Some(meta) = &self.meta{
+                  if meta.borrow().get_name(true) == "html"{
+                    find_html = true;
+                    is_document = true;
+                  } else {
+                    syntax_ok = false;
+                  }
+                } else {
+                  syntax_ok = false;
+                }
+              }
+            }
+            _ => {
+              syntax_ok = false;
+            }
+          }
+        }
+      }
+    }
+    if is_document{
+      return (is_document, syntax_ok);
+    }
+    (false, true)
+  }
   // check if two RefNode is same
   pub fn is_same(cur: &RefNode, other: &RefNode) -> bool{
     std::ptr::eq(cur.as_ptr() as *const _, other.as_ptr() as *const _)
@@ -854,7 +928,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 							}
 						} else if c == TAG_END_CHAR {
 							meta.is_end = true;
-							is_void_element = VOID_ELEMENTS.contains(&meta.name.to_lowercase().as_str());
+							is_void_element = is_void_tag(&meta.name.to_lowercase().as_str());
 							// self-closing tags
 							if tag_in_wait {
 								if doc.prev_char == '/' {
