@@ -1,8 +1,6 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use std::error::Error;
-use std::rc::Rc;
-use std::{env, fs};
 fn main() -> Result<(), Box<dyn Error>> {
 	// let current_dir = env::current_dir()?;
 	// let source_dir = current_dir.join("cases").canonicalize()?;
@@ -27,21 +25,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 	//     };
 	//   }
 	// }
-	let code = r##"<div>affg</div><div> tags are allowed here</div><div>def</div>"##;
+	let code = r##"</div><div>affg</div><div> tags are allowed here</div><div>def</div>"##;
 	// let code = format!("<script>{}</script>", code);
 	let doc = Doc::parse(
 		code,
 		ParseOptions {
+			auto_remove_nostart_endtag: true,
 			..Default::default()
 		},
-  )?;
-  if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs{
-    // Node::remove(&childs[0]);
-  }
+	)?;
+	// if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs {
+	// 	// Node::remove(&childs[0]);
+	// }
 	// println!("{:?}", result.root.borrow().id_tags);
 	println!(
 		"result:{:?}",
-		doc.render_text(&RenderOptions {
+		doc.render(&RenderOptions {
 			// inner_html: true,
 			..Default::default()
 		})

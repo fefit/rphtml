@@ -1,4 +1,4 @@
-use criterion::{ criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use rphtml::config::ParseOptions;
 use rphtml::parser::*;
 fn parse_doc() {
@@ -8,7 +8,6 @@ fn parse_doc_decode_entity() {
 	let _ = Doc::parse_file(
 		"./cases/full.html",
 		ParseOptions {
-			decode_entity: true,
 			..Default::default()
 		},
 	);

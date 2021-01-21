@@ -1,7 +1,7 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
 
-use htmlentity::entity::{encode_with, EncodeType, Entity};
+use htmlentity::entity::{decode_chars, EncodeType, Entity};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -124,37 +124,38 @@ lazy_static! {
 	static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec!['"', '\'', '`', '=', '<', '>'];
 }
 
-fn is_void_tag(name: &str) -> bool{
-  VOID_ELEMENTS.contains(&name)
+fn is_void_tag(name: &str) -> bool {
+	VOID_ELEMENTS.contains(&name)
 }
 
-pub fn allow_insert(name:&str, node_type: NodeType) -> bool {
-  if is_void_tag(name){
-    return false;
-  }
-  use NodeType::*;
-  if let Some(special) = SPECIAL_TAG_MAP.get(name){
-    let code_in = match node_type{
-      AbstractRoot => CodeTypeIn::AbstractRoot,
-      HTMLDOCTYPE => CodeTypeIn::HTMLDOCTYPE,
-      Comment => CodeTypeIn::Comment,
-      Text | SpacesBetweenTag => CodeTypeIn::TextNode,
-      TagEnd => CodeTypeIn::TagEnd,
-      XMLCDATA=> CodeTypeIn::XMLCDATA,
-      Tag => match name{
-        "script" => CodeTypeIn::HTMLScript,
-        "style" => CodeTypeIn::HTMLStyle,
-        _ => CodeTypeIn::Tag
-      }
-    };
-    return special.is_ok(&code_in, name, ' ', CodePosAt::default()).is_ok();
-  }
-  match name{
-    "title"|"textarea" => node_type == Text || node_type == SpacesBetweenTag,
-    _ => true
-  }
+pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
+	if is_void_tag(name) {
+		return false;
+	}
+	use NodeType::*;
+	if let Some(special) = SPECIAL_TAG_MAP.get(name) {
+		let code_in = match node_type {
+			AbstractRoot => CodeTypeIn::AbstractRoot,
+			HTMLDOCTYPE => CodeTypeIn::HTMLDOCTYPE,
+			Comment => CodeTypeIn::Comment,
+			Text | SpacesBetweenTag => CodeTypeIn::TextNode,
+			TagEnd => CodeTypeIn::TagEnd,
+			XMLCDATA => CodeTypeIn::XMLCDATA,
+			Tag => match name {
+				"script" => CodeTypeIn::HTMLScript,
+				"style" => CodeTypeIn::HTMLStyle,
+				_ => CodeTypeIn::Tag,
+			},
+		};
+		return special
+			.is_ok(&code_in, name, ' ', CodePosAt::default())
+			.is_ok();
+	}
+	match name {
+		"title" | "textarea" => node_type == Text || node_type == SpacesBetweenTag,
+		_ => true,
+	}
 }
-
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
@@ -194,12 +195,9 @@ fn get_content(content: &Option<Vec<char>>) -> String {
 	}
 }
 
-fn get_content_encoder(content: &Option<Vec<char>>, encoder: &RenderEncoderOption) -> String {
+fn get_content_decode(content: &Option<Vec<char>>) -> String {
 	match content {
-		Some(content) => content
-			.iter()
-			.map(|ch| encode_with(ch.to_string().as_str(), encoder))
-			.collect::<String>(),
+		Some(content) => decode_chars(content).iter().collect::<String>(),
 		_ => String::from(""),
 	}
 }
@@ -487,7 +485,7 @@ impl Node {
 	}
 	// build node
 	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus) -> String {
-		let mut result = String::from("");
+		let mut result = String::with_capacity(5);
 		let is_in_pre = status.is_in_pre;
 		let inner_type = status.inner_type.as_ref();
 		let is_inner = inner_type.is_some();
@@ -499,37 +497,40 @@ impl Node {
 						// spaces between tag,just remove it
 					} else {
 						let mut prev_is_space = false;
-						let need_encode = options.encoder.is_some();
-						let noop = Box::new(|_ch: char| None) as RenderEncoderOption;
-						let encoder = if need_encode {
-							options.encoder.as_ref().unwrap()
-						} else {
-							&noop
-						};
+						// check if need decode
+						let mut content: Vec<char> = Vec::with_capacity(5);
 						for &c in self.content.as_ref().unwrap().iter() {
 							if c.is_ascii_whitespace() {
 								if prev_is_space {
 									continue;
 								}
 								prev_is_space = true;
-								result.push(' ');
+								content.push(' ');
 							} else {
 								prev_is_space = false;
-								if !need_encode {
-									result.push(c);
-								} else {
-									result.push_str(&encode_with(c.to_string().as_str(), encoder));
-								}
+								content.push(c);
+							}
+						}
+						// when need decode, the content should append to result
+						if !content.is_empty() {
+							if options.decode_entity {
+								let decode_content = get_content_decode(&Some(content));
+								result.push_str(&decode_content);
+							} else {
+								result.push_str(&content.iter().collect::<String>());
 							}
 						}
 					}
 				} else {
-					let content = if options.encoder.is_some() {
-						get_content_encoder(&self.content, options.encoder.as_ref().unwrap())
-					} else {
-						get_content(&self.content)
-					};
-					result.push_str(content.as_str());
+					// when has content
+					if self.content.is_some() {
+						let content = if options.decode_entity {
+							get_content_decode(&self.content)
+						} else {
+							get_content(&self.content)
+						};
+						result.push_str(content.as_str());
+					}
 				}
 			}
 			Tag => {
@@ -690,76 +691,75 @@ impl Node {
 			}
 		}
 		self.build_tree(options, status)
-  }
-  // check if alone tag
-  pub fn is_alone_tag(&self)->bool{
-    if let Some(childs) = &self.childs {
-      match childs.len() {
-        1 => childs[0].borrow().node_type == NodeType::Text,
-        num => {
-          if num <= 3 {
-            return childs.iter().all(|child| {
-              let node_type = child.borrow().node_type;
-              node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
-            });
-          }
-          false
-        }
-      }
-    } else {
-      self.node_type == NodeType::Tag
-    }
-  }
-  // append a child
-  // is document node
-  pub fn is_document(&self)-> (bool, bool) {
-    let mut is_document = false;
-    let mut syntax_ok = true;
-    use NodeType::*;
-    if self.node_type == AbstractRoot{
-      if let Some(childs) = &self.childs{
-        let mut find_html = false;
-        for child in childs{
-          let child_node = child.borrow();
-          match child_node.node_type{
-            Comment | SpacesBetweenTag => {
-              // allowed in document
-            }
-            Tag => {
-              if find_html{
-                syntax_ok = false;
-              } else {
-                // check if is html tag
-                if let Some(meta) = &self.meta{
-                  if meta.borrow().get_name(true) == "html"{
-                    find_html = true;
-                    is_document = true;
-                  } else {
-                    syntax_ok = false;
-                  }
-                } else {
-                  syntax_ok = false;
-                }
-              }
-            }
-            _ => {
-              syntax_ok = false;
-            }
-          }
-        }
-      }
-    }
-    if is_document{
-      return (is_document, syntax_ok);
-    }
-    (false, true)
-  }
-  // check if two RefNode is same
-  pub fn is_same(cur: &RefNode, other: &RefNode) -> bool{
-    std::ptr::eq(cur.as_ptr() as *const _, other.as_ptr() as *const _)
-  }
+	}
+	// check if alone tag
+	pub fn is_alone_tag(&self) -> bool {
+		if let Some(childs) = &self.childs {
+			match childs.len() {
+				1 => childs[0].borrow().node_type == NodeType::Text,
+				num => {
+					if num <= 3 {
+						return childs.iter().all(|child| {
+							let node_type = child.borrow().node_type;
+							node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
+						});
+					}
+					false
+				}
+			}
+		} else {
+			self.node_type == NodeType::Tag
+		}
+	}
+	// append a child
+	// is document node
+	pub fn is_document(&self) -> (bool, bool) {
+		let mut is_document = false;
+		let mut syntax_ok = true;
+		use NodeType::*;
+		if self.node_type == AbstractRoot {
+			if let Some(childs) = &self.childs {
+				let mut find_html = false;
+				for child in childs {
+					let child_node = child.borrow();
+					match child_node.node_type {
+						Comment | SpacesBetweenTag => {
+							// allowed in document
+						}
+						Tag => {
+							if find_html {
+								syntax_ok = false;
+							} else {
+								// check if is html tag
+								if let Some(meta) = &self.meta {
+									if meta.borrow().get_name(true) == "html" {
+										find_html = true;
+										is_document = true;
+									} else {
+										syntax_ok = false;
+									}
+								} else {
+									syntax_ok = false;
+								}
+							}
+						}
+						_ => {
+							syntax_ok = false;
+						}
+					}
+				}
+			}
+		}
+		if is_document {
+			return (is_document, syntax_ok);
+		}
+		(false, true)
+	}
+	// check if two RefNode is same
+	pub fn is_same(cur: &RefNode, other: &RefNode) -> bool {
+		std::ptr::eq(cur.as_ptr() as *const _, other.as_ptr() as *const _)
+	}
 }
-
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq)]
 pub enum SpecialTag {
@@ -870,25 +870,7 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 			} else {
 				doc.repeat_whitespace = doc.repeat_whitespace && c.is_ascii_whitespace();
 			}
-			if doc.parse_options.decode_entity {
-				if !doc.in_entity {
-					if doc.entity.add(c) {
-						doc.in_entity = true;
-					} else {
-						doc.prev_chars.push(c);
-					}
-				} else {
-					let is_entity_ok = doc.entity.add(c);
-					if !is_entity_ok {
-						doc.end_entity();
-						doc.prev_chars.push(c);
-					} else if doc.entity.is_end {
-						doc.end_entity();
-					}
-				}
-			} else {
-				doc.prev_chars.push(c);
-			}
+			doc.prev_chars.push(c);
 		}
 	}
 	Ok(())
@@ -1204,7 +1186,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 		let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
 		let iter = doc.chain_nodes.iter().rev();
 		let mut back_num: usize = 0;
-		let max_back_num: usize = if doc.parse_options.allow_fix_unclose {
+		let max_back_num: usize = if doc.parse_options.auto_fix_endtag {
 			doc.chain_nodes.len() - 1
 		} else {
 			0
@@ -1268,10 +1250,15 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 				.chain_nodes
 				.truncate(doc.chain_nodes.len() - back_num - 1);
 		} else {
-			return create_parse_error(
-				ErrorKind::WrongEndTag(end_tag_name),
-				doc.current_node.borrow().begin_at,
-			);
+			if !doc.parse_options.auto_remove_nostart_endtag {
+				return create_parse_error(
+					ErrorKind::WrongEndTag(end_tag_name),
+					doc.current_node.borrow().begin_at,
+				);
+			}
+			// auto remove the unmatched endtag
+			doc.prev_chars.clear();
+			doc.set_code_in(Unkown);
 		}
 	} else {
 		doc.prev_chars.push(c);
@@ -1565,10 +1552,10 @@ pub struct RootNode {
 }
 
 impl RootNode {
-  pub fn get_node(&self) -> RefNode{
-    Rc::clone(&self.node.as_ref().unwrap())
-  }
-  fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
+	pub fn get_node(&self) -> RefNode {
+		Rc::clone(&self.node.as_ref().unwrap())
+	}
+	fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
 		map.get(query).map(|node| Rc::clone(node))
 	}
 	pub fn get_element_by_id(&self, id: &str) -> Option<RefNode> {
@@ -1635,17 +1622,17 @@ impl Doc {
 	// for serde, remove cycle reference
 	pub fn prepare_to_json(&mut self) {
 		Doc::clear_cycle_ref(&self.get_root_node());
-  }
-  
-  // clear cycle ref
-  fn clear_cycle_ref(node: &RefNode){
-    node.borrow_mut().parent = None;
-    if let Some(childs) = &node.borrow().childs{
-      for child in childs{
-        Doc::clear_cycle_ref(child);
-      }
-    }
-  }
+	}
+
+	// clear cycle ref
+	fn clear_cycle_ref(node: &RefNode) {
+		node.borrow_mut().parent = None;
+		if let Some(childs) = &node.borrow().childs {
+			for child in childs {
+				Doc::clear_cycle_ref(child);
+			}
+		}
+	}
 
 	// parse with string
 	pub fn parse(content: &str, options: ParseOptions) -> Result<Self, Box<dyn Error>> {
@@ -1797,7 +1784,6 @@ impl Doc {
 			self.chain_nodes.push(Rc::clone(&node));
 		}
 		// add cur node to parent's child nodes
-		
 	}
 	// set tag end info
 	fn set_tag_end_info(&mut self) {
@@ -1878,7 +1864,7 @@ impl Doc {
 		let cur_depth = self.chain_nodes.len();
 		// check if all tags are closed correctly.
 		if cur_depth > 1 {
-			if !self.parse_options.allow_fix_unclose {
+			if !self.parse_options.auto_fix_endtag {
 				let last_node = self.chain_nodes[cur_depth - 1].borrow();
 				let begin_at = last_node.begin_at;
 				let name = &last_node

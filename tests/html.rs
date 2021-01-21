@@ -1,4 +1,3 @@
-use htmlentity::entity::EncodeType;
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use std::error::Error;
@@ -39,13 +38,13 @@ fn test_pre_tag() -> HResult {
 	// test pre special
 	let doc = parse("<pre>text in prev</pre><div></div>")?;
 	let mut text_in_pre = false;
-  let mut div_not_in_pre = false;
-  if let Some(childs) = &doc.get_root_node().borrow().childs{
-    if let Some(text_nodes) = &childs[0].borrow().childs{
-      text_in_pre = matches!(text_nodes[0].borrow().special, Some(SpecialTag::Pre));
-    }
-    div_not_in_pre = childs[1].borrow().special.is_none();
-  }
+	let mut div_not_in_pre = false;
+	if let Some(childs) = &doc.get_root_node().borrow().childs {
+		if let Some(text_nodes) = &childs[0].borrow().childs {
+			text_in_pre = matches!(text_nodes[0].borrow().special, Some(SpecialTag::Pre));
+		}
+		div_not_in_pre = childs[1].borrow().special.is_none();
+	}
 	assert!(text_in_pre);
 	assert!(div_not_in_pre);
 	// pre render should keep spaces
@@ -186,7 +185,7 @@ fn test_tag_close() -> HResult {
 	let doc = Doc::parse(
 		r#"<div id=1><div id=2><div id=3>3</div>"#,
 		ParseOptions {
-			allow_fix_unclose: true,
+			auto_fix_endtag: true,
 			..Default::default()
 		},
 	);
@@ -403,16 +402,46 @@ fn test_unexpect_char() {
 }
 
 #[test]
-fn test_unclosed_tag() {
+fn test_auto_fix_endtag() {
+	fn parse_param(content: &str) -> Result<Doc, Box<dyn Error>> {
+		Doc::parse(
+			content,
+			ParseOptions {
+				auto_fix_endtag: true,
+				..Default::default()
+			},
+		)
+	}
+	// case1
 	let code = r##"<a><b></b>"##;
-	let result = parse(code);
-	assert!(result.is_err());
-	// un ended
+	assert!(parse(code).is_err());
+	assert!(parse_param(code).is_ok());
+	// case2
 	let code = r##"<b></b><a>text"##;
-	let result = parse(code);
-	assert!(result.is_err());
+	assert!(parse(code).is_err());
+	assert!(parse_param(code).is_ok());
 }
 
+#[test]
+fn test_auto_remove_nostart_endtag() {
+	fn parse_param(content: &str) -> Result<Doc, Box<dyn Error>> {
+		Doc::parse(
+			content,
+			ParseOptions {
+				auto_remove_nostart_endtag: true,
+				..Default::default()
+			},
+		)
+	}
+	// case1
+	let code = r##"text</a><b></b>"##;
+	assert!(parse(code).is_err());
+	assert!(parse_param(code).is_ok());
+	// case2
+	let code = r##"<b>text</a></b>"##;
+	assert!(parse(code).is_err());
+	assert!(parse_param(code).is_ok());
+}
 #[test]
 fn test_attr_nospace_splitor() {
 	let code = r##"<a readonly"title"></a>"##;
@@ -452,41 +481,13 @@ fn test_case_senstive() -> HResult {
 }
 
 #[test]
-fn test_decode_entity() -> HResult {
-	let code = r##"<div>&;&lt;span&#;&gt;&#60;/span&#x3e;&#xabc</div>"##;
-	let doc = Doc::parse(
-		code,
-		ParseOptions {
-			decode_entity: true,
-			..Default::default()
-		},
-  )?;
-  let mut content: Option<String> = None;
-  if let Some(childs) = &doc.get_root_node().borrow().childs{
-    if let Some(inner_childs) = &childs[0].borrow().childs{
-      content = inner_childs[0].borrow().content.as_ref()
-      .map(|v| v.iter().collect::<String>());
-    }
-  }
-  assert_eq!(
-    content,
-    Some("&;<span&#;></span>&#xabc".to_string()));
-	Ok(())
-}
-
-#[test]
-fn test_render_encoder() -> HResult {
-	let code = r##"<div><span>'"</span></div>"##;
+fn test_render_decode() -> HResult {
+	let code = r##"<div><span>&apos;"</span></div>"##;
 	let doc = parse(code)?;
 	let render_code = doc.render(&RenderOptions {
-		encoder: Some(Box::new(|ch: char| {
-			if ch == '\'' {
-				return Some(EncodeType::Named);
-			}
-			None
-		})),
+		decode_entity: true,
 		..Default::default()
 	});
-	assert_eq!(render_code, "<div><span>&apos;\"</span></div>");
+	assert_eq!(render_code, "<div><span>'\"</span></div>");
 	Ok(())
 }
