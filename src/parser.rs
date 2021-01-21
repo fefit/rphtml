@@ -171,6 +171,12 @@ pub enum NodeType {
 	XMLCDATA = 7,         // XML CDATA, IN SVG OR MATHML
 }
 
+impl Default for NodeType {
+	fn default() -> Self {
+		NodeType::AbstractRoot
+	}
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CodeTypeIn {
 	AbstractRoot,      // abstract root node,the begin node of document
@@ -400,7 +406,7 @@ enum RenderStatuInnerType {
 /**
  *
  */
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Node {
 	// if a tag node, add a index to the node
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -472,15 +478,22 @@ impl Node {
 			node_type,
 			begin_at: code_at,
 			end_at: code_at,
-			end_tag: None,
-			parent: None,
-			content: None,
-			childs: None,
-			meta: None,
-			uuid: None,
-			depth: 0,
-			special: None,
-			root: None,
+			..Default::default()
+		}
+	}
+	pub fn create_text_node(content: &str, code_at: Option<CodePosAt>) -> Self {
+		let node_type = if content.trim().is_empty() {
+			NodeType::SpacesBetweenTag
+		} else {
+			NodeType::Text
+		};
+		let code_at = code_at.unwrap_or_default();
+		Node {
+			node_type,
+			begin_at: code_at,
+			end_at: code_at,
+			content: Some(content.chars().collect::<Vec<char>>()),
+			..Default::default()
 		}
 	}
 	// build node
