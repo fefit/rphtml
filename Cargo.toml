@@ -4,11 +4,11 @@ version = "0.3.3"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
-description = "a html parser write in rust."
+description = "A html parser written in rust, use wasm-pack for Nodejs package."
 keywords = ["html", "parser", "html-parser", "html-minify", "html-render"]
 repository = "https://github.com/fefit/rphtml"
 categories = ["parser-implementations", "wasm"]
-exclude = ["node/**/*.*", "cases/**/*.html", "src/wasm_config.rs", "src/wasm.rs"]
+exclude = ["node/**/*.*", "cases/**/*.*", "build.sh", "codecov.yml", ".travis.yml"]
 readme = "README.md"
 
 [dependencies]
@@ -18,7 +18,7 @@ serde = { version = "1.0.116", features = ["derive", "rc"] }
 serde_json = "1.0.57"
 serde_repr = "0.1.6"
 uuid = { version = "0.8.1", features = ["wasm-bindgen","v4"]}
-htmlentity = {version = "1.1.0", git = "https://github.com/fefit/htmlentity", tag = "v1.1.0" }
+htmlentity = "1.1.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version="0.2.68", features = ["serde-serialize"] }

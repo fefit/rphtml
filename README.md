@@ -101,7 +101,6 @@ type IJsParserOptions = {
   allow_self_closing?: boolean;
   allow_fix_unclose?: boolean;
   case_sensitive_tagname?: boolean;
-  decode_entity?: boolean;
 };
 ```
 
@@ -122,12 +121,6 @@ type IJsParserOptions = {
   if true, the tag's name will case-sensitive,that means `<div>` and `</DIV>` are not matched each other.
 
   tag 标签是否区分大小写，区分大小写的情况下，`<div>`和`<DIV>` 将视作不同的标签，将影响标签的配对。
-
-- `decode_entity`
-
-  if true, will decode the entity text to an unicode character.
-
-  是否 decode 文本中的实体为一个 unicode 字符。
 
 ---
 
@@ -154,6 +147,7 @@ type IJsRenderOptions = {
   remove_comment?: boolean;
   remove_endtag_space?: boolean;
   inner_html?: boolean;
+  decode_entity?: boolean;
 };
 ```
 
@@ -198,6 +192,12 @@ type IJsRenderOptions = {
   if true,will output the tag's inner html.
 
   为 true 的情况下，将获取 innerHTML.
+
+- `decode_entity`
+
+  if true, will decode the entity text to an unicode character.
+
+  是否 decode 文本中的实体为一个 unicode 字符。
 
 ---
 
