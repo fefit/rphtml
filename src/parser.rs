@@ -1557,11 +1557,14 @@ pub struct Doc {
 }
 
 pub type StringNodeMap = HashMap<String, RefNode>;
+pub type ErrorHandle = Box<dyn Fn(Box<dyn Error>)>;
 #[derive(Serialize, Deserialize)]
 pub struct RootNode {
 	pub node: Option<RefNode>,
 	pub id_tags: Rc<RefCell<StringNodeMap>>,
 	pub tags: Rc<RefCell<StringNodeMap>>,
+	#[serde(skip_serializing, skip_deserializing)]
+	pub onerror: Rc<RefCell<Option<Rc<ErrorHandle>>>>,
 }
 
 impl RootNode {
@@ -1593,6 +1596,7 @@ impl Doc {
 			node: Some(root_node),
 			id_tags: Rc::new(RefCell::new(HashMap::new())),
 			tags: Rc::new(RefCell::new(HashMap::new())),
+			onerror: Rc::new(RefCell::new(None)),
 		};
 		let mut nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
 		let mut chain_nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
@@ -1601,6 +1605,7 @@ impl Doc {
 			node: None,
 			id_tags: Rc::clone(&root.id_tags),
 			tags: Rc::clone(&root.tags),
+			onerror: Rc::clone(&root.onerror),
 		})));
 		node.borrow_mut().uuid = Some(make_uuid());
 		nodes.push(node);

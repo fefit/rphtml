@@ -44,7 +44,6 @@ pub struct JsParseOptions {
 	pub allow_self_closing: Option<bool>,
 	pub auto_fix_endtag: Option<bool>,
 	pub auto_remove_nostart_endtag: Option<bool>,
-	pub decode_entity: Option<bool>,
 }
 
 impl From<IJsParseOptions> for JsParseOptions {
@@ -63,7 +62,6 @@ impl From<JsParseOptions> for ParseOptions {
 			allow_self_closing: optional_bool(options.allow_self_closing),
 			auto_fix_endtag: optional_bool(options.auto_fix_endtag),
 			auto_remove_nostart_endtag: optional_bool(options.auto_remove_nostart_endtag),
-			decode_entity: optional_bool(options.decode_entity),
 		}
 	}
 }
@@ -76,6 +74,7 @@ pub struct JsRenderOptions {
 	pub remove_comment: Option<bool>,
 	pub always_close_void: Option<bool>,
 	pub inner_html: Option<bool>,
+	pub decode_entity: Option<bool>,
 }
 
 impl From<IJsRenderOptions> for JsRenderOptions {
@@ -97,7 +96,7 @@ impl From<JsRenderOptions> for RenderOptions {
 			remove_comment: optional_bool(options.remove_comment),
 			always_close_void: optional_bool(options.always_close_void),
 			inner_html: optional_bool(options.inner_html),
-			encoder: None,
+			decode_entity: optional_bool(options.decode_entity),
 		}
 	}
 }
