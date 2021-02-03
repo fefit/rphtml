@@ -128,6 +128,13 @@ fn is_void_tag(name: &str) -> bool {
 	VOID_ELEMENTS.contains(&name)
 }
 
+pub fn is_content_tag(name: &str) -> bool {
+	match name {
+		"style" | "script" | "title" | "textarea" => true,
+		_ => false,
+	}
+}
+
 pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 	if is_void_tag(name) {
 		return false;
