@@ -419,6 +419,9 @@ pub struct Node {
 	// the node's depth in the document
 	pub depth: usize,
 
+	// the node's index of the parent's all childs
+	pub index: usize,
+
 	// the node's type
 	pub node_type: NodeType,
 
@@ -461,6 +464,7 @@ impl fmt::Debug for Node {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_struct("Node")
 			.field("uuid", &self.uuid)
+			.field("index", &self.index)
 			.field("node_type", &self.node_type)
 			.field("begin_at", &self.begin_at)
 			.field("end_at", &self.end_at)
@@ -1787,8 +1791,10 @@ impl Doc {
 			let mut parent_node = parent_node.borrow_mut();
 			let child = Rc::clone(&node);
 			if let Some(childs) = &mut parent_node.childs {
+				child.borrow_mut().index = childs.len();
 				childs.push(child);
 			} else {
+				child.borrow_mut().index = 0;
 				parent_node.childs = Some(vec![child]);
 			}
 		}

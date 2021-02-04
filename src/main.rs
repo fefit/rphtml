@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 			..Default::default()
 		},
 	)?;
+	println!("{:?}", doc.get_root_node());
 	// if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs {
 	// 	// Node::remove(&childs[0]);
 	// }
