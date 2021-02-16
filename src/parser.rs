@@ -1,7 +1,7 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
 
-use htmlentity::entity::{decode_chars, EncodeType, Entity};
+use htmlentity::entity::{decode_chars, encode, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -201,6 +201,17 @@ pub enum CodeTypeIn {
 fn get_content(content: &Option<Vec<char>>) -> String {
 	match content {
 		Some(content) => content.iter().collect::<String>(),
+		_ => String::from(""),
+	}
+}
+
+fn get_content_encode(content: &Option<Vec<char>>) -> String {
+	match content {
+		Some(content) => encode(
+			&content.iter().collect::<String>(),
+			EntitySet::SpecialChars,
+			EncodeType::NamedOrDecimal,
+		),
 		_ => String::from(""),
 	}
 }
@@ -584,7 +595,12 @@ impl Node {
 				}
 				// content for some special tags, such as style/script
 				if self.content.is_some() {
-					result.push_str(get_content(&self.content).as_str());
+					if !options.decode_entity {
+						// content tag's html need encode
+						result.push_str(get_content_encode(&self.content).as_str());
+					} else {
+						result.push_str(get_content(&self.content).as_str());
+					}
 				}
 			}
 			TagEnd => {
