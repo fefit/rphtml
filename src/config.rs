@@ -18,4 +18,5 @@ pub struct RenderOptions {
 	pub always_close_void: bool,
 	pub inner_html: bool,
 	pub decode_entity: bool,
+	pub encode_content: bool,
 }

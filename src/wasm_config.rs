@@ -28,6 +28,7 @@ export interface IJsRenderOptions {
   remove_endtag_space?: boolean;
   inner_html?: boolean;
   decode_entity?: boolean;
+  encode_content?: boolean;
 }
 "#;
 
@@ -75,6 +76,7 @@ pub struct JsRenderOptions {
 	pub always_close_void: Option<bool>,
 	pub inner_html: Option<bool>,
 	pub decode_entity: Option<bool>,
+	pub encode_content: Option<bool>,
 }
 
 impl From<IJsRenderOptions> for JsRenderOptions {
@@ -97,6 +99,7 @@ impl From<JsRenderOptions> for RenderOptions {
 			always_close_void: optional_bool(options.always_close_void),
 			inner_html: optional_bool(options.inner_html),
 			decode_entity: optional_bool(options.decode_entity),
+			encode_content: optional_bool(options.encode_content),
 		}
 	}
 }

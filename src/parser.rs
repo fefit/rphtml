@@ -595,11 +595,11 @@ impl Node {
 				}
 				// content for some special tags, such as style/script
 				if self.content.is_some() {
-					if !options.decode_entity {
+					if !options.encode_content {
+						result.push_str(get_content(&self.content).as_str());
+					} else {
 						// content tag's html need encode
 						result.push_str(get_content_encode(&self.content).as_str());
-					} else {
-						result.push_str(get_content(&self.content).as_str());
 					}
 				}
 			}
