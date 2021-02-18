@@ -216,8 +216,8 @@ fn get_content_encode(content: &Option<Vec<char>>) -> String {
 	match content {
 		Some(content) => encode(
 			&content.iter().collect::<String>(),
-			EntitySet::SpecialChars,
-			EncodeType::NamedOrDecimal,
+			EntitySet::Html,
+			EncodeType::Named,
 		),
 		_ => String::from(""),
 	}

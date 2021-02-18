@@ -61,8 +61,16 @@ fn test_pre_tag() -> HResult {
 
 #[test]
 fn test_title_tag() -> HResult {
-	let code = "<title><div> tags are allowed here</div></title>";
+	let code = "<title><div>&nbsp;tags are allowed here</div></title>";
 	let doc = parse(code)?;
+	let encoded = doc.render(&RenderOptions {
+		encode_content: true,
+		..Default::default()
+	});
+	assert_eq!(
+		encoded,
+		"<title>&lt;div&gt;&amp;nbsp;tags are allowed here&lt;/div&gt;</title>"
+	);
 	assert_eq!(render(&doc), code);
 	Ok(())
 }
