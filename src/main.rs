@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 	//     };
 	//   }
 	// }
-	let code = r##"</div><div>affg</div><div> tags are allowed here</div><div>def</div>"##;
+	let code = r##"
+  <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript" /></svg>
+  "##;
 	// let code = format!("<script>{}</script>", code);
 	let doc = Doc::parse(
 		code,

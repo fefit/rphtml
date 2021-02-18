@@ -35,18 +35,6 @@ fn test_doctype() -> HResult {
 
 #[test]
 fn test_pre_tag() -> HResult {
-	// test pre special
-	let doc = parse("<pre>text in prev</pre><div></div>")?;
-	let mut text_in_pre = false;
-	let mut div_not_in_pre = false;
-	if let Some(childs) = &doc.get_root_node().borrow().childs {
-		if let Some(text_nodes) = &childs[0].borrow().childs {
-			text_in_pre = matches!(text_nodes[0].borrow().special, Some(SpecialTag::Pre));
-		}
-		div_not_in_pre = childs[1].borrow().special.is_none();
-	}
-	assert!(text_in_pre);
-	assert!(div_not_in_pre);
 	// pre render should keep spaces
 	let code = r##"
     <pre> spaces </pre>
@@ -66,8 +54,8 @@ fn test_pre_tag() -> HResult {
 		..Default::default()
 	};
 	assert_eq!(doc.render(&options), r#"<pre> abc </pre><a> </a>"#);
-	// pre tag can't have sub tags
-	assert!(parse(r##"<pre><a></a></pre>"##).is_err());
+	// pre tag
+	assert!(parse(r##"<pre><a></a></pre>"##).is_ok());
 	Ok(())
 }
 

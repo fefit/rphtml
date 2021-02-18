@@ -116,7 +116,6 @@ lazy_static! {
 	static ref SPECIAL_TAG_MAP: HashMap<&'static str, SpecialTag> = {
 		use SpecialTag::*;
 		let mut map = HashMap::new();
-		map.insert("pre", Pre);
 		map.insert("svg", Svg);
 		map.insert("math", MathML);
 		map
@@ -129,7 +128,7 @@ fn is_void_tag(name: &str) -> bool {
 }
 
 pub fn is_content_tag(name: &str) -> bool {
-	matches!(name, "style" | "script" | "title" | "textarea" | "pre")
+	matches!(name, "style" | "script" | "title" | "textarea")
 }
 
 pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
@@ -800,7 +799,6 @@ impl Node {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq)]
 pub enum SpecialTag {
-	Pre,
 	MathML,
 	Svg,
 	Template,
@@ -823,15 +821,6 @@ impl SpecialTag {
 			_ => {}
 		};
 		match self {
-			Pre => {
-				let message = format!(
-					"the tag '{}' can only contains text node, wrong '{:?}' at {:?}",
-					tag_name, code_in, position
-				);
-				if code_in != &TextNode {
-					return create_parse_error(ErrorKind::CommonError(message), position);
-				}
-			}
 			Svg | MathML => {
 				match code_in {
 					Tag | XMLCDATA => {}
@@ -964,7 +953,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 											// sub element in Svg or MathML allow self-closing
 											match doc.check_special() {
 												Some(SpecialTag::Svg) | Some(SpecialTag::MathML) => {
-													// is in svg or mathml
+													// is in svg or mathml, close the tag
 												}
 												_ => {
 													return doc.error(ErrorKind::WrongSelfClosing(meta.name.clone()));
@@ -977,6 +966,9 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 									// set self closing
 									is_self_closing = true;
 									meta.self_closed = true;
+									// return
+									doc.prev_chars.clear();
+									return Ok(());
 								}
 							} else {
 								is_end_key_or_value = true;
@@ -1174,7 +1166,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 				.check_special()
 				.map_or(false, |special| special == SpecialTag::Svg);
 			match tag_name.to_lowercase().as_str() {
-				name @ "script" | name @ "style" | name @ "title" | name @ "textarea" if !is_in_svg => {
+				name @ "script" | name @ "style" | name @ "title" | name @ "textarea"
+					if !is_in_svg || name != "title" && name != "textarea" =>
+				{
+					// svg tags allow script and style tag, but
 					doc.mem_position = doc.position;
 					let code_in = match name {
 						"script" => HTMLScript,
