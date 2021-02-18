@@ -127,8 +127,16 @@ fn is_void_tag(name: &str) -> bool {
 	VOID_ELEMENTS.contains(&name)
 }
 
+fn is_plain_text_tag(name: &str) -> bool {
+	matches!(name, "title" | "textarea")
+}
+
+fn is_script_or_style(name: &str) -> bool {
+	matches!(name, "style" | "script")
+}
+
 pub fn is_content_tag(name: &str) -> bool {
-	matches!(name, "style" | "script" | "title" | "textarea")
+	is_script_or_style(name) || is_plain_text_tag(name)
 }
 
 pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
@@ -154,10 +162,10 @@ pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 			.is_ok(&code_in, name, ' ', CodePosAt::default())
 			.is_ok();
 	}
-	match name {
-		"title" | "textarea" => node_type == Text || node_type == SpacesBetweenTag,
-		_ => true,
+	if is_plain_text_tag(name) {
+		return node_type == Text || node_type == SpacesBetweenTag;
 	}
+	true
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -594,7 +602,8 @@ impl Node {
 				}
 				// content for some special tags, such as style/script
 				if self.content.is_some() {
-					if !options.encode_content {
+					let need_encode = options.encode_content && is_plain_text_tag(&tag_name);
+					if !need_encode {
 						result.push_str(get_content(&self.content).as_str());
 					} else {
 						// content tag's html need encode
@@ -604,18 +613,16 @@ impl Node {
 			}
 			TagEnd => {
 				let mut content = get_content(&self.content);
-				if options.remove_endtag_space {
-					content = content.trim_end().to_string();
-				}
-				if options.lowercase_tagname {
-					content = content.to_lowercase();
-					if is_in_pre && content == "pre" {
-						status.is_in_pre = false;
-					}
-				} else if is_in_pre && content.to_lowercase() == "pre" {
+				if is_in_pre && content.trim_end().to_lowercase() == "pre" {
 					status.is_in_pre = false;
 				}
 				if !is_inner {
+					if options.remove_endtag_space {
+						content = content.trim_end().to_string();
+					}
+					if options.lowercase_tagname {
+						content = content.to_lowercase();
+					}
 					content = format!("</{}>", content);
 					result.push_str(content.as_str());
 				}
@@ -911,8 +918,11 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 	let mut tag_name: String = String::from("");
 	// void elements
 	let mut is_void_element = false;
+	// meet end character '>'
 	let mut is_node_end = false;
+	// is an id tag
 	let mut id_name: Option<String> = None;
+	//
 	{
 		let mut current_node = doc.current_node.borrow_mut();
 		match current_node.meta.as_mut() {
@@ -942,33 +952,23 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 								if doc.prev_char == '/' {
 									if is_void_element {
 										// void element allow self closing
-										if doc.parse_options.case_sensitive_tagname
-											&& meta.name.to_lowercase() != meta.name
-										{
-											return doc.error(ErrorKind::WrongCaseSensitive(meta.name.clone()));
-										}
-									// void element has pop before.
 									} else {
+										// self closing
 										if !doc.parse_options.allow_self_closing {
 											// sub element in Svg or MathML allow self-closing
 											match doc.check_special() {
 												Some(SpecialTag::Svg) | Some(SpecialTag::MathML) => {
-													// is in svg or mathml, close the tag
+													// is in svg or mathml
 												}
 												_ => {
 													return doc.error(ErrorKind::WrongSelfClosing(meta.name.clone()));
 												}
 											}
 										}
-										// not void element, but allow self-closing or in <svg/math>, pop from chain nodes
-										doc.chain_nodes.pop();
 									}
 									// set self closing
 									is_self_closing = true;
 									meta.self_closed = true;
-									// return
-									doc.prev_chars.clear();
-									return Ok(());
 								}
 							} else {
 								is_end_key_or_value = true;
@@ -1161,15 +1161,20 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 	}
 	if is_node_end {
 		doc.set_tag_end_info();
-		if doc.code_in == Tag {
+		if is_self_closing {
+			// not void element, but allow self-closing or in <svg/math>, pop from chain nodes
+			doc.chain_nodes.pop();
+			doc.prev_chars.clear();
+			doc.set_code_in(Unkown);
+		} else if doc.code_in == Tag {
 			let is_in_svg = doc
 				.check_special()
 				.map_or(false, |special| special == SpecialTag::Svg);
 			match tag_name.to_lowercase().as_str() {
 				name @ "script" | name @ "style" | name @ "title" | name @ "textarea"
-					if !is_in_svg || name != "title" && name != "textarea" =>
+					if !is_in_svg || is_script_or_style(name) =>
 				{
-					// svg tags allow script and style tag, but
+					// svg tags allow script and style tag, but title and textarea will treat as normal tag
 					doc.mem_position = doc.position;
 					let code_in = match name {
 						"script" => HTMLScript,
@@ -1184,7 +1189,11 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 					doc.detect = Some(next_chars);
 				}
 				name => {
-					if doc.in_special.is_none() && !is_self_closing {
+					if is_void_element {
+						// void elements
+						doc.chain_nodes.pop();
+					} else if doc.in_special.is_none() {
+						// not void elements will check if special
 						doc.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(name) {
 							Some((special, Box::leak(tag_name.into_boxed_str())))
 						} else {
@@ -1193,10 +1202,6 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 					}
 					doc.set_code_in(Unkown);
 				}
-			}
-			// void elements
-			if is_void_element {
-				doc.chain_nodes.pop();
 			}
 			// reset chars
 			doc.prev_chars.clear();
