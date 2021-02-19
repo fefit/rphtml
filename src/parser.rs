@@ -5,7 +5,7 @@ use htmlentity::entity::{decode_chars, encode, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -415,6 +415,9 @@ impl Default for TagCodeIn {
 }
 
 pub type RefNode = Rc<RefCell<Node>>;
+
+type RefDoc = Rc<RefCell<Doc>>;
+
 #[derive(Default, Clone)]
 struct RenderStatus {
 	inner_type: Option<RenderStatuInnerType>,
@@ -457,9 +460,13 @@ pub struct Node {
 	#[serde(skip_serializing, skip_deserializing)]
 	pub parent: Option<Weak<RefCell<Node>>>,
 
-	// root
+	// root node
 	#[serde(skip_serializing, skip_deserializing)]
-	pub root: Option<Rc<RefCell<RootNode>>>,
+	pub root: Option<Weak<RefCell<Node>>>,
+
+	// document
+	#[serde(skip_serializing, skip_deserializing)]
+	pub document: Option<RefDoc>,
 
 	// the content,for text/comment/style/script nodes
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -493,6 +500,7 @@ impl fmt::Debug for Node {
 			.field("end_tag", &self.end_tag)
 			.field("parent", &self.parent.is_some())
 			.field("root", &self.root.is_some())
+			.field("document", &self.document.is_some())
 			.finish()
 	}
 }
@@ -848,7 +856,8 @@ impl SpecialTag {
 	}
 }
 
-pub type HResult = Result<(), Box<dyn Error>>;
+pub type GenResult<T> = Result<T, Box<dyn Error>>;
+pub type HResult = GenResult<()>;
 type NextHandle = fn(&mut Doc, char) -> HResult;
 
 /*
@@ -1153,8 +1162,6 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 	// add id tag to tags
 	if let Some(name) = id_name {
 		doc
-			.root
-			.borrow_mut()
 			.id_tags
 			.borrow_mut()
 			.insert(name, Rc::clone(&doc.current_node));
@@ -1419,12 +1426,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 			let uuid = make_uuid();
 			inner_node.uuid = Some(uuid.clone());
 			let node = Rc::new(RefCell::new(inner_node));
-			doc
-				.root
-				.borrow_mut()
-				.tags
-				.borrow_mut()
-				.insert(uuid, Rc::clone(&node));
+			doc.tags.borrow_mut().insert(uuid, Rc::clone(&node));
 			doc.add_new_node(node);
 			doc.set_text_spaces_between();
 			doc.set_code_in(Tag);
@@ -1577,34 +1579,14 @@ pub struct Doc {
 	handle: NextHandle,
 	pub total_chars: usize,
 	pub parse_options: ParseOptions,
-	pub root: Rc<RefCell<RootNode>>,
+	pub root: RefNode,
+	pub id_tags: Rc<RefCell<StringNodeMap>>,
+	pub tags: Rc<RefCell<StringNodeMap>>,
+	pub onerror: Rc<RefCell<Option<Rc<ErrorHandle>>>>,
 }
 
 pub type StringNodeMap = HashMap<String, RefNode>;
 pub type ErrorHandle = Box<dyn Fn(Box<dyn Error>)>;
-#[derive(Serialize, Deserialize)]
-pub struct RootNode {
-	pub node: Option<RefNode>,
-	pub id_tags: Rc<RefCell<StringNodeMap>>,
-	pub tags: Rc<RefCell<StringNodeMap>>,
-	#[serde(skip_serializing, skip_deserializing)]
-	pub onerror: Rc<RefCell<Option<Rc<ErrorHandle>>>>,
-}
-
-impl RootNode {
-	pub fn get_node(&self) -> RefNode {
-		Rc::clone(&self.node.as_ref().unwrap())
-	}
-	fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
-		map.get(query).map(|node| Rc::clone(node))
-	}
-	pub fn get_element_by_id(&self, id: &str) -> Option<RefNode> {
-		RootNode::get_element(&self.id_tags.borrow(), id)
-	}
-	pub fn get_element_by_uuid(&self, uuid: &str) -> Option<RefNode> {
-		RootNode::get_element(&self.tags.borrow(), uuid)
-	}
-}
 
 impl Doc {
 	// create new parser
@@ -1615,23 +1597,13 @@ impl Doc {
 		)));
 		let ref_node = Rc::clone(&node);
 		let current_node = Rc::clone(&node);
-		let root_node = Rc::clone(&node);
-		let root = RootNode {
-			node: Some(root_node),
-			id_tags: Rc::new(RefCell::new(HashMap::new())),
-			tags: Rc::new(RefCell::new(HashMap::new())),
-			onerror: Rc::new(RefCell::new(None)),
-		};
+		let root = Rc::clone(&node);
 		let mut nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
 		let mut chain_nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
-		// set root for root node
-		node.borrow_mut().root = Some(Rc::new(RefCell::new(RootNode {
-			node: None,
-			id_tags: Rc::clone(&root.id_tags),
-			tags: Rc::clone(&root.tags),
-			onerror: Rc::clone(&root.onerror),
-		})));
+		// set uuid for root node
 		node.borrow_mut().uuid = Some(make_uuid());
+		// set root for root node
+		node.borrow_mut().root = Some(Rc::downgrade(&root));
 		nodes.push(node);
 		chain_nodes.push(ref_node);
 		let mut doc = Doc {
@@ -1647,11 +1619,14 @@ impl Doc {
 			in_special: None,
 			in_entity: false,
 			entity: Entity::new(),
-			root: Rc::new(RefCell::new(root)),
 			parse_options: Default::default(),
 			repeat_whitespace: false,
 			check_textnode: None,
 			handle: noop,
+			root,
+			id_tags: Rc::new(RefCell::new(HashMap::new())),
+			tags: Rc::new(RefCell::new(HashMap::new())),
+			onerror: Rc::new(RefCell::new(None)),
 		};
 		doc.init();
 		doc
@@ -1663,12 +1638,13 @@ impl Doc {
 	}
 	// for serde, remove cycle reference
 	pub fn prepare_to_json(&mut self) {
-		Doc::clear_cycle_ref(&self.get_root_node());
+		Doc::clear_cycle_ref(&self.root);
 	}
 
 	// clear cycle ref
 	fn clear_cycle_ref(node: &RefNode) {
 		node.borrow_mut().parent = None;
+		node.borrow_mut().root = None;
 		if let Some(childs) = &node.borrow().childs {
 			for child in childs {
 				Doc::clear_cycle_ref(child);
@@ -1676,19 +1652,25 @@ impl Doc {
 		}
 	}
 
+	// into root
+	pub fn into_root(self) -> DocHolder {
+		let doc = Rc::new(RefCell::new(self));
+		doc.borrow_mut().root.borrow_mut().document = Some(Rc::clone(&doc));
+		DocHolder { doc }
+	}
 	// parse with string
-	pub fn parse(content: &str, options: ParseOptions) -> Result<Self, Box<dyn Error>> {
+	pub fn parse(content: &str, options: ParseOptions) -> GenResult<DocHolder> {
 		let mut doc = Doc::new();
 		doc.parse_options = options;
 		for c in content.chars() {
 			doc.next(c)?;
 		}
 		doc.eof()?;
-		Ok(doc)
+		Ok(doc.into_root())
 	}
 
 	// parse file
-	pub fn parse_file<P>(filename: P, options: ParseOptions) -> Result<Self, Box<dyn Error>>
+	pub fn parse_file<P>(filename: P, options: ParseOptions) -> GenResult<DocHolder>
 	where
 		P: AsRef<Path>,
 	{
@@ -1709,7 +1691,7 @@ impl Doc {
 			doc.next('\n')?;
 		}
 		doc.eof()?;
-		Ok(doc)
+		Ok(doc.into_root())
 	}
 	// gather previous characters
 	fn chars_to_string(&self) -> String {
@@ -1806,6 +1788,7 @@ impl Doc {
 			// add the node to parent's child list
 			let mut parent_node = parent_node.borrow_mut();
 			let child = Rc::clone(&node);
+			// add cur node to parent's child nodes
 			if let Some(childs) = &mut parent_node.childs {
 				child.borrow_mut().index = childs.len();
 				childs.push(child);
@@ -1813,21 +1796,20 @@ impl Doc {
 				child.borrow_mut().index = 0;
 				parent_node.childs = Some(vec![child]);
 			}
+			// set node root
+			node.borrow_mut().root = Some(Rc::downgrade(&self.root));
 		}
 		// set special
 		node.borrow_mut().special = match self.in_special {
 			Some((special, _)) => Some(special),
 			None => None,
 		};
-		// set node root
-		node.borrow_mut().root = Some(Rc::clone(&self.root));
 		// set current node to be new node
 		self.current_node = Rc::clone(&node);
 		// if is a tag node, add the tag node to chain nodes
 		if node_type == Tag {
 			self.chain_nodes.push(Rc::clone(&node));
 		}
-		// add cur node to parent's child nodes
 	}
 	// set tag end info
 	fn set_tag_end_info(&mut self) {
@@ -1921,7 +1903,7 @@ impl Doc {
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
-			let root_node = Rc::clone(&self.get_root_node());
+			let root_node = Rc::clone(&self.root);
 			self.fix_unclosed_tag(unclosed, &root_node);
 		}
 		// check and fix last node info.
@@ -1941,26 +1923,62 @@ impl Doc {
 			);
 		}
 		// set the root node's end position
-		self.get_root_node().borrow_mut().end_at = self.position;
+		self.root.borrow_mut().end_at = self.position;
 		Ok(())
 	}
 	// return error with doc.position
 	fn error(&self, kind: ErrorKind) -> HResult {
 		create_parse_error(kind, self.position)
 	}
-	pub fn get_root_node(&self) -> RefNode {
-		self.root.borrow().get_node()
-	}
-	// render
-	pub fn render(&self, options: &RenderOptions) -> String {
-		self.get_root_node().borrow_mut().build(options, false)
-	}
-	// render text
-	pub fn render_text(&self, options: &RenderOptions) -> String {
-		self.get_root_node().borrow_mut().build(options, true)
-	}
+
 	// render for js
 	pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {
 		tree.borrow().build(options, false)
+	}
+}
+
+// get an element from string node map
+fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
+	map.get(query).map(|node| Rc::clone(node))
+}
+/// Doc holder
+pub struct DocHolder {
+	doc: RefDoc,
+}
+
+impl DocHolder {
+	// render
+	pub fn render(&self, options: &RenderOptions) -> String {
+		self.borrow().root.borrow().build(options, false)
+	}
+	// render text
+	pub fn render_text(&self, options: &RenderOptions) -> String {
+		self.borrow().root.borrow().build(options, true)
+	}
+	// borrow
+	pub fn borrow(&self) -> Ref<Doc> {
+		self.doc.borrow()
+	}
+	// borrow_mut
+	pub(crate) fn borrow_mut(&self) -> RefMut<Doc> {
+		self.doc.borrow_mut()
+	}
+	// borrow mut
+	pub fn get_root_node(&self) -> RefNode {
+		Rc::clone(&self.borrow().root)
+	}
+	// get element by id
+	pub fn get_element_by_id(&self, id: &str) -> Option<RefNode> {
+		get_element(&self.borrow().id_tags.borrow(), id)
+	}
+	// get element by uuid
+	pub fn get_element_by_uuid(&self, uuid: &str) -> Option<RefNode> {
+		get_element(&self.borrow().tags.borrow(), uuid)
+	}
+}
+
+impl From<RefDoc> for DocHolder {
+	fn from(doc: RefDoc) -> Self {
+		DocHolder { doc }
 	}
 }

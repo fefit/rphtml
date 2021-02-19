@@ -1,9 +1,7 @@
 #![cfg(target_arch = "wasm32")]
-use crate::parser::{Doc, NodeType, RefNode, RootNode};
+use crate::parser::{Doc, DocHolder, RefNode};
 use crate::wasm_config::{IJsParseOptions, IJsRenderOptions, JsParseOptions, JsRenderOptions};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
@@ -75,10 +73,9 @@ extern "C" {
 #[wasm_bindgen(catch)]
 pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode, JsValue> {
 	let options: JsParseOptions = options.map_or(Default::default(), |options| options.into());
-	let mut doc =
-		Doc::parse(content, options.into()).map_err(|e| JsValue::from_str(&e.to_string()))?;
-	doc.prepare_to_json();
-	let result = IJsNode::from(doc);
+	let doc = Doc::parse(content, options.into()).map_err(|e| JsValue::from_str(&e.to_string()))?;
+	doc.borrow_mut().prepare_to_json();
+	let result = IJsNode::from(doc.get_root_node());
 	Ok(result)
 }
 
@@ -86,7 +83,7 @@ pub fn parse(content: &str, options: Option<IJsParseOptions>) -> Result<IJsNode,
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IJsNode {
 	#[wasm_bindgen(skip)]
-	pub root: Rc<RefCell<RootNode>>,
+	pub root: RefNode,
 }
 
 #[wasm_bindgen]
@@ -94,31 +91,28 @@ impl IJsNode {
 	/* methods */
 	#[wasm_bindgen(js_name = toJson)]
 	pub fn to_json(&self) -> Result<IJsNodeTree, JsValue> {
-		let result = JsValue::from_serde(&self.root.borrow().get_node())
-			.map_err(|e| JsValue::from(&e.to_string()))?;
+		let result = JsValue::from_serde(&self.root).map_err(|e| JsValue::from(&e.to_string()))?;
 		Ok(result.into())
 	}
 
 	#[wasm_bindgen(js_name = toString)]
 	pub fn to_string(&self) -> Result<IJsString, JsValue> {
-		let result = serde_json::to_string(&self.root.borrow().get_node())
-			.map_err(|e| JsValue::from(&e.to_string()))?;
+		let result = serde_json::to_string(&self.root).map_err(|e| JsValue::from(&e.to_string()))?;
 		Ok(JsValue::from_str(&result).into())
 	}
 
 	#[wasm_bindgen]
 	pub fn render(&self, options: Option<IJsRenderOptions>) -> Result<IJsString, JsValue> {
 		let options: JsRenderOptions = options.map_or(Default::default(), |options| options.into());
-		let result = Doc::render_js_tree(Rc::clone(&self.root.borrow().get_node()), &options.into());
+		let result = Doc::render_js_tree(Rc::clone(&self.root), &options.into());
 		Ok(JsValue::from_str(result.as_str()).into())
 	}
 
 	#[wasm_bindgen(js_name = getTagByUuid)]
 	pub fn get_tag_by_uuid(&self, uuid: &str) -> Result<Option<IJsNode>, JsValue> {
+		let doc: DocHolder = self.root.borrow().document.as_ref().unwrap().clone().into();
 		Ok(
-			self
-				.root
-				.borrow()
+			doc
 				.get_element_by_uuid(uuid)
 				.map(|node| Rc::clone(&node).into()),
 		)
@@ -126,7 +120,7 @@ impl IJsNode {
 
 	#[wasm_bindgen(js_name = isAloneTag)]
 	pub fn is_alone_tag(&self) -> bool {
-		self.root.borrow().get_node().borrow().is_alone_tag()
+		self.root.borrow().is_alone_tag()
 	}
 }
 
@@ -138,35 +132,10 @@ impl From<Doc> for IJsNode {
 	}
 }
 
-fn map_tags(cur: RefNode, tags: &mut HashMap<String, RefNode>) {
-	if let Some(childs) = &cur.borrow().childs {
-		tags.insert(cur.borrow().uuid.as_ref().unwrap().clone(), Rc::clone(&cur));
-		if !childs.is_empty() {
-			for child in childs {
-				map_tags(Rc::clone(&child), tags);
-			}
-		}
-	}
-}
-
-impl From<Rc<RefCell<RootNode>>> for IJsNode {
-	fn from(root: Rc<RefCell<RootNode>>) -> Self {
+impl From<RefNode> for IJsNode {
+	fn from(root: RefNode) -> Self {
 		IJsNode {
 			root: Rc::clone(&root),
 		}
-	}
-}
-
-impl From<RefNode> for IJsNode {
-	fn from(root: RefNode) -> Self {
-		let mut tags: HashMap<String, RefNode> = HashMap::new();
-		map_tags(Rc::clone(&root), &mut tags);
-		let root = Rc::new(RefCell::new(RootNode {
-			node: Some(Rc::clone(&root)),
-			tags: Rc::new(RefCell::new(tags)),
-			id_tags: Rc::new(RefCell::new(HashMap::new())),
-			onerror: Rc::new(RefCell::new(None)),
-		}));
-		IJsNode { root }
 	}
 }

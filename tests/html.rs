@@ -2,11 +2,11 @@ use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use std::error::Error;
 
-fn parse(code: &str) -> Result<Doc, Box<dyn Error>> {
+fn parse(code: &str) -> GenResult<DocHolder> {
 	let doc = Doc::parse(code, Default::default())?;
 	Ok(doc)
 }
-fn render(doc: &Doc) -> String {
+fn render(doc: &DocHolder) -> String {
 	doc.render(&Default::default())
 }
 
@@ -127,7 +127,7 @@ fn test_attrs() -> HResult {
     <img src=http://site.com/abc.jpg alt =abc defer data-width= 60 data-name = "abc" data-size='60*60' data-msg="quote is '\"',ok" class="js-img img" />
   "##;
 	let doc = parse(code)?;
-	doc.get_root_node().borrow().childs.as_ref().map(|childs| {
+	doc.borrow().root.borrow().childs.as_ref().map(|childs| {
 		let _ = childs.iter().map(|c| {
 			if let Some(meta) = &c.borrow().meta {
 				let attrs = &meta.borrow().attrs;
@@ -399,7 +399,7 @@ fn test_unexpect_char() {
 
 #[test]
 fn test_auto_fix_endtag() {
-	fn parse_param(content: &str) -> Result<Doc, Box<dyn Error>> {
+	fn parse_param(content: &str) -> GenResult<DocHolder> {
 		Doc::parse(
 			content,
 			ParseOptions {
@@ -420,7 +420,7 @@ fn test_auto_fix_endtag() {
 
 #[test]
 fn test_auto_remove_nostart_endtag() {
-	fn parse_param(content: &str) -> Result<Doc, Box<dyn Error>> {
+	fn parse_param(content: &str) -> GenResult<DocHolder> {
 		Doc::parse(
 			content,
 			ParseOptions {
