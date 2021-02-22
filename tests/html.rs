@@ -181,7 +181,7 @@ fn test_tag_close() -> HResult {
 	let doc = Doc::parse(
 		r#"<div id=1><div id=2><div id=3>3</div>"#,
 		ParseOptions {
-			auto_fix_endtag: true,
+			auto_fix_unclosed_tag: true,
 			..Default::default()
 		},
 	);
@@ -398,12 +398,12 @@ fn test_unexpect_char() {
 }
 
 #[test]
-fn test_auto_fix_endtag() {
+fn test_auto_fix_unclosed_tag() {
 	fn parse_param(content: &str) -> GenResult<DocHolder> {
 		Doc::parse(
 			content,
 			ParseOptions {
-				auto_fix_endtag: true,
+				auto_fix_unclosed_tag: true,
 				..Default::default()
 			},
 		)
@@ -419,12 +419,12 @@ fn test_auto_fix_endtag() {
 }
 
 #[test]
-fn test_auto_remove_nostart_endtag() {
+fn test_auto_fix_unexpected_endtag() {
 	fn parse_param(content: &str) -> GenResult<DocHolder> {
 		Doc::parse(
 			content,
 			ParseOptions {
-				auto_remove_nostart_endtag: true,
+				auto_fix_unexpected_endtag: true,
 				..Default::default()
 			},
 		)

@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 	let doc = Doc::parse(
 		code,
 		ParseOptions {
-			auto_remove_nostart_endtag: true,
+			auto_fix_unexpected_endtag: true,
 			..Default::default()
 		},
 	)?;

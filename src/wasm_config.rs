@@ -10,8 +10,8 @@ fn optional_bool(value: Option<bool>) -> bool {
 #[wasm_bindgen(typescript_custom_section)]
 const IJS_PARSE_OPTIONS: &'static str = r#"
 export interface IJsParseOptions {
-  auto_fix_endtag?: boolean;
-  auto_remove_nostart_endtag?: boolean;
+  auto_fix_unclosed_tag?: boolean;
+  auto_fix_unexpected_endtag?: boolean;
   allow_self_closing?: boolean;
   case_sensitive_tagname?: boolean;
 }
@@ -43,8 +43,8 @@ extern "C" {
 pub struct JsParseOptions {
 	pub case_sensitive_tagname: Option<bool>,
 	pub allow_self_closing: Option<bool>,
-	pub auto_fix_endtag: Option<bool>,
-	pub auto_remove_nostart_endtag: Option<bool>,
+	pub auto_fix_unclosed_tag: Option<bool>,
+	pub auto_fix_unexpected_endtag: Option<bool>,
 }
 
 impl From<IJsParseOptions> for JsParseOptions {
@@ -61,8 +61,8 @@ impl From<JsParseOptions> for ParseOptions {
 		ParseOptions {
 			case_sensitive_tagname: optional_bool(options.case_sensitive_tagname),
 			allow_self_closing: optional_bool(options.allow_self_closing),
-			auto_fix_endtag: optional_bool(options.auto_fix_endtag),
-			auto_remove_nostart_endtag: optional_bool(options.auto_remove_nostart_endtag),
+			auto_fix_unclosed_tag: optional_bool(options.auto_fix_unclosed_tag),
+			auto_fix_unexpected_endtag: optional_bool(options.auto_fix_unexpected_endtag),
 		}
 	}
 }

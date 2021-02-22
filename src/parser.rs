@@ -1230,7 +1230,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 		let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
 		let iter = doc.chain_nodes.iter().rev();
 		let mut back_num: usize = 0;
-		let max_back_num: usize = if doc.parse_options.auto_fix_endtag {
+		let max_back_num: usize = if doc.parse_options.auto_fix_unclosed_tag {
 			doc.chain_nodes.len() - 1
 		} else {
 			0
@@ -1294,7 +1294,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 				.chain_nodes
 				.truncate(doc.chain_nodes.len() - back_num - 1);
 		} else {
-			if !doc.parse_options.auto_remove_nostart_endtag {
+			if !doc.parse_options.auto_fix_unexpected_endtag {
 				return create_parse_error(
 					ErrorKind::WrongEndTag(end_tag_name),
 					doc.current_node.borrow().begin_at,
@@ -1890,7 +1890,7 @@ impl Doc {
 		let cur_depth = self.chain_nodes.len();
 		// check if all tags are closed correctly.
 		if cur_depth > 1 {
-			if !self.parse_options.auto_fix_endtag {
+			if !self.parse_options.auto_fix_unclosed_tag {
 				let last_node = self.chain_nodes[cur_depth - 1].borrow();
 				let begin_at = last_node.begin_at;
 				let name = &last_node

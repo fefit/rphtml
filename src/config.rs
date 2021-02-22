@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct ParseOptions {
 	pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
 	pub allow_self_closing: bool,     // allow self closing that not void elements
-	pub auto_fix_endtag: bool,        // auto fix unclosed tag without end
-	pub auto_remove_nostart_endtag: bool, // auto remove unclosed tag without start
+	pub auto_fix_unclosed_tag: bool,  // auto fix unclosed tag
+	pub auto_fix_unexpected_endtag: bool, // auto fix unexpected end tag
 }
 
 #[derive(Default, Deserialize, Serialize)]
