@@ -26,17 +26,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 	//   }
 	// }
 	let code = r##"
-  <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript" /></svg>
+  <p><div></div>
   "##;
 	// let code = format!("<script>{}</script>", code);
 	let doc = Doc::parse(
 		code,
 		ParseOptions {
-			auto_fix_unexpected_endtag: true,
+			// auto_fix_unexpected_endtag: true,
+			auto_fix_unclosed_tag: true,
 			..Default::default()
 		},
 	)?;
-	println!("{:?}", doc.borrow().root);
+	// println!("{:?}", doc.borrow().root);
 	// if let Some(childs) = &mut doc.get_root_node().borrow_mut().childs {
 	// 	// Node::remove(&childs[0]);
 	// }

@@ -5,7 +5,9 @@ use htmlentity::entity::{decode_chars, encode, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
-use std::cell::{Ref, RefCell, RefMut};
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefMut;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -602,10 +604,8 @@ impl Node {
 					// add self closing
 					if meta.self_closed || (meta.auto_fix && options.always_close_void) {
 						result.push_str(" /");
-					} else if meta.auto_fix && self.end_tag.is_none() {
-						result.push(TAG_END_CHAR);
-						result.push_str(format!("</{}", tag_name).as_str());
 					}
+					// add end char
 					result.push(TAG_END_CHAR);
 				}
 				// content for some special tags, such as style/script
@@ -1224,45 +1224,41 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
  */
 fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 	use CodeTypeIn::*;
+	let mut unexpected_type: Option<CodeTypeIn> = None;
 	// the end tag
 	if c == TAG_END_CHAR {
 		let end_tag_name = doc.chars_to_string();
 		let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
-		let iter = doc.chain_nodes.iter().rev();
-		let mut back_num: usize = 0;
-		let max_back_num: usize = if doc.parse_options.auto_fix_unclosed_tag {
-			doc.chain_nodes.len() - 1
-		} else {
-			0
-		};
-		let is_allow_fix = max_back_num > 0;
-		let mut empty_closed_tags: Vec<RefNode> = vec![];
-		let mut real_tag_node: Option<RefNode> = None;
-		for node in iter {
-			if let Some(meta) = &node.borrow().meta {
-				let tag_name = &meta.borrow().name;
-				let is_equal = tag_name == &end_tag_name;
-				if is_equal || (tag_name.to_lowercase() == fix_end_tag_name) {
-					if doc.parse_options.case_sensitive_tagname && !is_equal {
-						return doc.error(ErrorKind::WrongCaseSensitive(tag_name.clone()));
+		let mut is_endtag_ok = false;
+		// check if the tag matched
+		if doc.chain_nodes.len() > 1 {
+			if let Some(last_tag) = doc.chain_nodes.last() {
+				let last_tag_name = last_tag
+					.borrow()
+					.meta
+					.as_ref()
+					.expect("Tag node must have a meta of tag name")
+					.borrow()
+					.get_name(false);
+				if last_tag_name.to_lowercase() == fix_end_tag_name {
+					if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
+						return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name));
 					}
-					real_tag_node = Some(Rc::clone(node));
-					break;
+					is_endtag_ok = true;
 				}
-				if is_allow_fix {
-					empty_closed_tags.push(Rc::clone(node));
-				}
-			}
-			back_num += 1;
-			if back_num >= max_back_num {
-				break;
 			}
 		}
-		// find the nearest tag
-		if let Some(tag) = &real_tag_node {
-			// set end tag for the tag node
-			tag.borrow_mut().end_tag = Some(Rc::clone(&doc.current_node));
-			let is_only_text_child = match &tag.borrow().childs {
+		// meet the right end tag
+		if is_endtag_ok {
+			// pop from chain nodes
+			let last_tag = doc
+				.chain_nodes
+				.pop()
+				.expect("End tag must have matched tag in chain nodes");
+			// set end tag
+			last_tag.borrow_mut().end_tag = Some(Rc::clone(&doc.current_node));
+			// set space between tag
+			let is_only_text_child = match &last_tag.borrow().childs {
 				Some(childs) => childs.len() == 1 && childs[0].borrow().node_type == NodeType::Text,
 				None => false,
 			};
@@ -1273,40 +1269,42 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 			doc.set_tag_end_info();
 			// set code in
 			doc.set_code_in(Unkown);
-			// fix the empty tags
-			if !empty_closed_tags.is_empty() {
-				// reverse the tags, keep the childs order
-				empty_closed_tags.reverse();
-				doc.fix_unclosed_tag(empty_closed_tags, tag);
-			}
-			// set end tag more info
-			let mut current_node = doc.current_node.borrow_mut();
-			current_node.parent = Some(Rc::downgrade(&tag));
-			current_node.depth = tag.borrow().depth;
-			current_node.content = Some(end_tag_name.chars().collect());
 			// end of special tag
 			if doc.in_special.is_some() && doc.in_special.unwrap().1.to_lowercase() == fix_end_tag_name {
 				doc.in_special = None;
 			}
+			// set end tag more info
+			let mut current_node = doc.current_node.borrow_mut();
+			current_node.parent = Some(Rc::downgrade(&last_tag));
+			current_node.depth = last_tag.borrow().depth;
+			current_node.content = Some(end_tag_name.chars().collect());
+			// clear chars
 			doc.prev_chars.clear();
-			// remove the matched tag from the chain nodes
-			doc
-				.chain_nodes
-				.truncate(doc.chain_nodes.len() - back_num - 1);
-		} else {
-			if !doc.parse_options.auto_fix_unexpected_endtag {
-				return create_parse_error(
-					ErrorKind::WrongEndTag(end_tag_name),
-					doc.current_node.borrow().begin_at,
-				);
-			}
-			// auto remove the unmatched endtag
-			doc.prev_chars.clear();
-			doc.set_code_in(Unkown);
+			return Ok(());
 		}
-	} else {
-		doc.prev_chars.push(c);
+		// unexpected end tag
+		unexpected_type = Some(Unkown);
 	}
+	// match a left angle bracket '<', unexpected end tag
+	if c == TAG_BEGIN_CHAR {
+		unexpected_type = Some(UnkownTag);
+	}
+	// unexpected end tag
+	if let Some(code_in) = unexpected_type {
+		if !doc.parse_options.auto_fix_unexpected_endtag {
+			return create_parse_error(
+				ErrorKind::WrongEndTag(doc.chars_to_string()),
+				doc.current_node.borrow().begin_at,
+			);
+		}
+		// auto fix unexpected endtag
+		doc.prev_chars.clear();
+		doc.set_code_in(code_in);
+		return Ok(());
+	}
+	// just add char to prev chars
+	doc.prev_chars.push(c);
+	// return
 	Ok(())
 }
 
@@ -1357,13 +1355,10 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 				is_matched = true;
 				// set code in unkown
 				doc.set_code_in(Unkown);
-				// set end
-				let end_at = doc.mem_position;
 				// find the matched
 				let end_tag_name = doc.prev_chars.split_off(chars_len).split_off(2);
 				// add an end tag
-				let mut end = Node::new(NodeType::TagEnd, end_at);
-				end.end_at = doc.position.next_col();
+				let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
 				end.content = Some(end_tag_name);
 				end.depth = doc.chain_nodes.len() - 1;
 				end.parent = Some(Rc::downgrade(&doc.current_node));
@@ -1842,43 +1837,47 @@ impl Doc {
 		}
 	}
 	// fix unclosed tag
-	fn fix_unclosed_tag(&mut self, mut unclosed: Vec<RefNode>, parent: &RefNode) {
-		let cur_depth = parent.borrow().depth + 1;
-		for tag_node in unclosed.iter_mut() {
-			let mut has_fixed = false;
-			let mut tag_node = tag_node.borrow_mut();
-			// set it's meta as auto fix
-			if let Some(meta) = &tag_node.meta {
-				let mut meta = meta.borrow_mut();
-				if meta.auto_fix {
-					has_fixed = true;
-				} else {
-					meta.auto_fix = true;
-				}
+	fn fix_unclosed_tag(&mut self, unclosed: &[RefNode]) {
+		for (index, tag_node) in unclosed.iter().enumerate() {
+			let mut end_tag: Option<Node> = None;
+			let mut should_single = false;
+			if let Some(meta) = &tag_node.borrow_mut().meta {
+				// set it's meta as auto fix
+				meta.borrow_mut().auto_fix = true;
+				// make end tag
+				let tag_name = meta.borrow().get_name(false);
+				let mut end = Node::new(NodeType::TagEnd, self.position);
+				end.content = Some(tag_name.chars().collect());
+				end.depth = index + 1;
+				end.parent = Some(Rc::downgrade(&tag_node));
+				end_tag = Some(end);
 			}
-			if !has_fixed {
-				// change the parent node
-				tag_node.parent = Some(Rc::downgrade(parent));
-				tag_node.depth = cur_depth;
+			if let Some(end_tag) = end_tag {
+				tag_node.borrow_mut().end_tag = Some(Rc::new(RefCell::new(end_tag)));
 			}
-			// change all childs's parent and clear
-			if let Some(childs) = &tag_node.childs {
-				if !childs.is_empty() {
-					for child_node in childs.iter() {
-						if let Some(childs) = parent.borrow_mut().childs.as_mut() {
-							childs.push(Rc::clone(child_node))
-						};
-						let mut child_node = child_node.borrow_mut();
-						child_node.parent = Some(Rc::downgrade(parent));
-						child_node.depth = cur_depth;
-						if let Some(meta) = &child_node.meta {
-							meta.borrow_mut().auto_fix = true;
+			if should_single {
+				let mut tag_node = tag_node.borrow_mut();
+				let cur_depth = tag_node.depth + 1;
+				let parent = tag_node.parent.as_ref().unwrap().upgrade().unwrap();
+				// change all childs's parent and clear
+				if let Some(childs) = &tag_node.childs {
+					if !childs.is_empty() {
+						for child_node in childs.iter() {
+							if let Some(childs) = parent.borrow_mut().childs.as_mut() {
+								childs.push(Rc::clone(child_node))
+							};
+							let mut child_node = child_node.borrow_mut();
+							child_node.parent = Some(Rc::downgrade(&parent));
+							child_node.depth = cur_depth;
+							if let Some(meta) = &child_node.meta {
+								meta.borrow_mut().auto_fix = true;
+							}
 						}
 					}
 				}
+				// clear childs
+				tag_node.childs = None;
 			}
-			// clear childs
-			tag_node.childs = None;
 		}
 	}
 	// is in svg or mathml
@@ -1903,24 +1902,29 @@ impl Doc {
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
-			let root_node = Rc::clone(&self.root);
-			self.fix_unclosed_tag(unclosed, &root_node);
+			self.fix_unclosed_tag(&unclosed);
 		}
 		// check and fix last node info.
 		use CodeTypeIn::*;
-		if self.code_in == TextNode {
-			let mut last_node = self.current_node.borrow_mut();
-			last_node.depth = 1;
-			last_node.content = Some(self.prev_chars.clone());
-			if self.repeat_whitespace {
-				last_node.node_type = NodeType::SpacesBetweenTag;
+		match self.code_in {
+			TextNode => {
+				let mut last_node = self.current_node.borrow_mut();
+				last_node.depth = 1;
+				last_node.content = Some(self.prev_chars.clone());
+				if self.repeat_whitespace {
+					last_node.node_type = NodeType::SpacesBetweenTag;
+				}
+				last_node.end_at = self.position;
 			}
-			last_node.end_at = self.position;
-		} else if self.code_in != Unkown && self.code_in != AbstractRoot {
-			return create_parse_error(
-				ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
-				self.current_node.borrow().begin_at,
-			);
+			Unkown | AbstractRoot => {
+				// OK
+			}
+			_ => {
+				return create_parse_error(
+					ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
+					self.current_node.borrow().begin_at,
+				);
+			}
 		}
 		// set the root node's end position
 		self.root.borrow_mut().end_at = self.position;
@@ -1960,6 +1964,7 @@ impl DocHolder {
 		self.doc.borrow()
 	}
 	// borrow_mut
+	#[cfg(target_arch = "wasm32")]
 	pub(crate) fn borrow_mut(&self) -> RefMut<Doc> {
 		self.doc.borrow_mut()
 	}

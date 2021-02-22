@@ -188,7 +188,7 @@ fn test_tag_close() -> HResult {
 	assert_eq!(doc.is_ok(), true);
 	assert_eq!(
 		render(&doc?),
-		"<div id=1></div><div id=2></div><div id=3>3</div>"
+		"<div id=1><div id=2><div id=3>3</div></div></div>"
 	);
 	// wrong tag end
 	assert_eq!(parse("<div></p>").is_err(), true);
