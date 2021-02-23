@@ -7,6 +7,7 @@ pub struct ParseOptions {
 	pub auto_fix_unclosed_tag: bool,  // auto fix unclosed tag
 	pub auto_fix_unexpected_endtag: bool, // auto fix unexpected end tag
 	pub auto_fix_unescaped_lt: bool,  // auto fix unescaped left angle  '<'
+	pub named_tag_uuid: bool,         // should named tag with uuid
 }
 
 #[derive(Default, Deserialize, Serialize)]

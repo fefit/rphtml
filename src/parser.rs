@@ -1410,11 +1410,13 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 	match c {
 		'a'..='z' | 'A'..='Z' => {
 			// new tag node, add tag_index
-			let mut inner_node = Node::new(NodeType::Tag, doc.mem_position);
-			let uuid = make_uuid();
-			inner_node.uuid = Some(uuid.clone());
+			let inner_node = Node::new(NodeType::Tag, doc.mem_position);
 			let node = Rc::new(RefCell::new(inner_node));
-			doc.tags.borrow_mut().insert(uuid, Rc::clone(&node));
+			if doc.parse_options.named_tag_uuid {
+				let uuid = make_uuid();
+				node.borrow_mut().uuid = Some(uuid.clone());
+				doc.tags.borrow_mut().insert(uuid, Rc::clone(&node));
+			}
 			doc.add_new_node(node);
 			doc.set_text_spaces_between();
 			doc.set_code_in(Tag);
@@ -1910,7 +1912,7 @@ impl Doc {
 						.borrow()
 						.parent
 						.as_ref()
-						.map(|node| node.upgrade().expect("Parent node"));
+						.map(|node| node.upgrade().expect("Tag node must have a parent node"));
 				}
 			}
 			_ => {
@@ -1918,7 +1920,7 @@ impl Doc {
 			}
 		}
 		if let Some(parent) = &parent {
-			let text_node = Node::new(NodeType::Text, Default::default());
+			let text_node = Node::new(NodeType::Text, self.mem_position);
 			let current_node = Rc::new(RefCell::new(text_node));
 			let mut parent = parent.borrow_mut();
 			let childs = parent.childs.get_or_insert(Vec::new());
