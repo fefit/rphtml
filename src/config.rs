@@ -1,6 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default)]
 pub struct ParseOptions {
 	pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
 	pub allow_self_closing: bool,     // allow self closing that not void elements
@@ -10,7 +8,7 @@ pub struct ParseOptions {
 	pub named_tag_uuid: bool,         // should named tag with uuid
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Debug, Default)]
 pub struct RenderOptions {
 	pub minify_spaces: bool,
 	pub lowercase_tagname: bool,

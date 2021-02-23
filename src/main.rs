@@ -4961,7 +4961,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 	let start_time = SystemTime::now();
 	let total = 200;
 	for _ in 0..total {
-		Doc::parse(
+		let doc = Doc::parse(
 			code,
 			ParseOptions {
 				auto_fix_unexpected_endtag: true,

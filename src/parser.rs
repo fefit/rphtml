@@ -3,24 +3,12 @@ use crate::util::{is_char_available_in_key, is_char_available_in_value};
 
 use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
 use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
-use serde_repr::*;
-#[cfg(target_arch = "wasm32")]
-use std::cell::RefMut;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::env;
 use std::error::Error;
 use std::fmt;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::BufReader;
-use std::path::Path;
 use std::rc::{Rc, Weak};
 use thiserror::Error;
-use uuid::Uuid;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 /*
 * constants
 */
@@ -59,10 +47,6 @@ fn create_parse_error(kind: ErrorKind, position: CodePosAt) -> HResult {
 	Err(err)
 }
 
-// make uuid
-fn make_uuid() -> String {
-	Uuid::new_v4().to_string()
-}
 #[derive(Error, Debug)]
 pub enum ErrorKind {
 	#[error("wrong tag <{0}")]
@@ -170,9 +154,7 @@ pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 	true
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-#[derive(PartialEq, Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
-#[repr(u8)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum NodeType {
 	AbstractRoot = 0,     // abstract root node
 	HTMLDOCTYPE = 1,      // html doctype
@@ -234,52 +216,34 @@ fn get_content_decode(content: &Option<Vec<char>>) -> String {
 /**
  * the doc's position
 */
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct CodePosAt {
-	pub line_no: usize,
-	pub col_no: usize,
 	pub index: usize,
 }
 
 impl fmt::Display for CodePosAt {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let output = format!(
-			"[line:{},col:{},index:{}]",
-			self.line_no, self.col_no, self.index
-		);
+		let output = format!("[index:{}]", self.index);
 		f.write_str(output.as_str())
 	}
 }
 
 impl CodePosAt {
 	// new
-	pub fn new(line_no: usize, col_no: usize, index: usize) -> Self {
-		CodePosAt {
-			line_no,
-			col_no,
-			index,
-		}
+	pub fn new(index: usize) -> Self {
+		CodePosAt { index }
 	}
 	// create a begin position
 	pub fn begin() -> Self {
-		CodePosAt::new(1, 0, 0)
-	}
-	// jump to new line
-	pub fn set_new_line(&mut self) {
-		self.line_no += 1;
-		self.col_no = 0;
+		CodePosAt::new(0)
 	}
 	// move to next col
 	pub fn move_one(&mut self) {
-		self.col_no += 1;
 		self.index += 1;
 	}
 	// get the next col position
 	pub fn next_col(&self) -> Self {
 		CodePosAt {
-			line_no: self.line_no,
-			col_no: self.col_no + 1,
 			index: self.index + 1,
 		}
 	}
@@ -292,7 +256,7 @@ impl CodePosAt {
  * if key is None,it's a value with quote
  */
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct Attr {
 	pub key: Option<AttrData>,
 	pub value: Option<AttrData>,
@@ -300,11 +264,9 @@ pub struct Attr {
 	pub need_quote: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct AttrData {
 	pub content: String,
-	pub begin_at: CodePosAt,
-	pub end_at: CodePosAt,
 }
 
 impl Attr {
@@ -358,23 +320,13 @@ impl Attr {
  * name: the tag name
  * attrs: the attribute list
 */
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct TagMeta {
-	#[serde(skip)]
 	prev_is_key: bool,
-
-	#[serde(skip)]
 	is_in_kv: bool,
-
-	#[serde(skip)]
 	is_in_translate: bool,
-
-	#[serde(skip)]
 	tag_in: TagCodeIn,
-
-	#[serde(skip)]
 	is_end: bool,
-
 	pub self_closed: bool,
 	pub auto_fix: bool,
 	pub name: String,
@@ -403,7 +355,7 @@ impl TagMeta {
 	}
 }
 
-#[derive(PartialEq, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Debug)]
 pub enum TagCodeIn {
 	Wait,
 	Key,
@@ -435,15 +387,8 @@ enum RenderStatuInnerType {
 /**
  *
  */
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Node {
-	// if a tag node, add a index to the node
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub uuid: Option<String>,
-
-	// the node's depth in the document
-	pub depth: usize,
-
 	// the node's index of the parent's all childs
 	pub index: usize,
 
@@ -457,42 +402,33 @@ pub struct Node {
 	pub end_at: CodePosAt,
 
 	// the end tag </xx> of the tag node
-	#[serde(skip_serializing_if = "Option::is_none")]
 	pub end_tag: Option<RefNode>,
 
 	// parent node, use weak reference,prevent reference loop
-	#[serde(skip_serializing, skip_deserializing)]
 	pub parent: Option<Weak<RefCell<Node>>>,
 
 	// root node
-	#[serde(skip_serializing, skip_deserializing)]
 	pub root: Option<Weak<RefCell<Node>>>,
 
 	// document
-	#[serde(skip_serializing, skip_deserializing)]
 	pub document: Option<RefDoc>,
 
 	// the content,for text/comment/style/script nodes
-	#[serde(skip_serializing_if = "Option::is_none")]
 	pub content: Option<Vec<char>>,
 
 	// the child nodes
-	#[serde(skip_serializing_if = "Option::is_none")]
 	pub childs: Option<Vec<RefNode>>,
 
 	// the tag node meta information
-	#[serde(skip_serializing_if = "Option::is_none")]
 	pub meta: Option<RefCell<TagMeta>>,
 
 	// special information
-	#[serde(skip_serializing_if = "Option::is_none")]
 	pub special: Option<SpecialTag>,
 }
 
 impl fmt::Debug for Node {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_struct("Node")
-			.field("uuid", &self.uuid)
 			.field("index", &self.index)
 			.field("node_type", &self.node_type)
 			.field("begin_at", &self.begin_at)
@@ -814,7 +750,7 @@ impl Node {
 	}
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq)]
 pub enum SpecialTag {
 	MathML,
 	Svg,
@@ -901,7 +837,10 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 				doc.prev_chars.clear();
 				doc.repeat_whitespace = c.is_ascii_whitespace();
 			} else {
-				doc.repeat_whitespace = doc.repeat_whitespace && c.is_ascii_whitespace();
+				// check if repeat whitespace
+				if doc.repeat_whitespace {
+					doc.repeat_whitespace = c.is_ascii_whitespace();
+				}
 			}
 			doc.prev_chars.push(c);
 		}
@@ -1130,10 +1069,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 							_ => unreachable!("just detect code in HTMLDOCTYPE and TAG"),
 						}
 					}
-					/* All characters except '>', whitespaces, '/' that have detected above are allowed identities */
-					// if !is_identity(&doc.prev_chars) {
-					// 	return doc.error(ErrorKind::WrongTagIdentity(cur_tag_name));
-					// }
+					/* all characters except '>', whitespaces, '/' that have detected above are allowed identities */
 					let meta = TagMeta {
 						name: cur_tag_name,
 						attrs: Vec::with_capacity(5),
@@ -1269,7 +1205,6 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 			// set end tag more info
 			let mut current_node = doc.current_node.borrow_mut();
 			current_node.parent = Some(Rc::downgrade(&last_tag));
-			current_node.depth = last_tag.borrow().depth;
 			current_node.content = Some(end_tag_name.chars().collect());
 			// clear chars
 			doc.prev_chars.clear();
@@ -1353,7 +1288,6 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 				// add an end tag
 				let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
 				end.content = Some(end_tag_name);
-				end.depth = doc.chain_nodes.len() - 1;
 				end.parent = Some(Rc::downgrade(&doc.current_node));
 				// set tag node's content, end_tag
 				let node = Rc::new(RefCell::new(end));
@@ -1412,11 +1346,6 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 			// new tag node, add tag_index
 			let inner_node = Node::new(NodeType::Tag, doc.mem_position);
 			let node = Rc::new(RefCell::new(inner_node));
-			if doc.parse_options.named_tag_uuid {
-				let uuid = make_uuid();
-				node.borrow_mut().uuid = Some(uuid.clone());
-				doc.tags.borrow_mut().insert(uuid, Rc::clone(&node));
-			}
 			doc.add_new_node(node);
 			doc.set_text_spaces_between();
 			doc.set_code_in(Tag);
@@ -1565,16 +1494,14 @@ pub struct Doc {
 	prev_char: char,
 	chain_nodes: Vec<RefNode>,
 	current_node: RefNode,
-	prev_node: Option<RefNode>,
 	in_special: Option<(SpecialTag, &'static str)>,
 	repeat_whitespace: bool,
 	check_textnode: Option<RefNode>,
 	handle: NextHandle,
-	pub total_chars: usize,
+	pub chars: Vec<char>,
 	pub parse_options: ParseOptions,
 	pub root: RefNode,
 	pub id_tags: Rc<RefCell<StringNodeMap>>,
-	pub tags: Rc<RefCell<StringNodeMap>>,
 	pub onerror: Rc<RefCell<Option<Rc<ErrorHandle>>>>,
 }
 
@@ -1593,8 +1520,6 @@ impl Doc {
 		let root = Rc::clone(&node);
 		let mut nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
 		let mut chain_nodes = Vec::with_capacity(ALLOC_NODES_CAPACITY);
-		// set uuid for root node
-		node.borrow_mut().uuid = Some(make_uuid());
 		// set root for root node
 		node.borrow_mut().root = Some(Rc::downgrade(&root));
 		nodes.push(node);
@@ -1607,8 +1532,7 @@ impl Doc {
 			prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
 			chain_nodes,
 			current_node,
-			prev_node: None,
-			total_chars: 0,
+			chars: Vec::new(),
 			detect: None,
 			in_special: None,
 			parse_options: Default::default(),
@@ -1617,7 +1541,6 @@ impl Doc {
 			handle: noop,
 			root,
 			id_tags: Rc::new(RefCell::new(HashMap::new())),
-			tags: Rc::new(RefCell::new(HashMap::new())),
 			onerror: Rc::new(RefCell::new(None)),
 		};
 		doc.init();
@@ -1628,21 +1551,6 @@ impl Doc {
 	fn init(&mut self) {
 		self.handle = parse_wait_and_text;
 	}
-	// for serde, remove cycle reference
-	pub fn prepare_to_json(&mut self) {
-		Doc::clear_cycle_ref(&self.root);
-	}
-
-	// clear cycle ref
-	fn clear_cycle_ref(node: &RefNode) {
-		node.borrow_mut().parent = None;
-		node.borrow_mut().root = None;
-		if let Some(childs) = &node.borrow().childs {
-			for child in childs {
-				Doc::clear_cycle_ref(child);
-			}
-		}
-	}
 
 	// into root
 	pub fn into_root(self) -> DocHolder {
@@ -1650,41 +1558,18 @@ impl Doc {
 		doc.borrow_mut().root.borrow_mut().document = Some(Rc::clone(&doc));
 		DocHolder { doc }
 	}
+
 	// parse with string
 	pub fn parse(content: &str, options: ParseOptions) -> GenResult<DocHolder> {
 		let mut doc = Doc::new();
 		doc.parse_options = options;
 		for c in content.chars() {
-			doc.next(c)?;
+			doc.next(&c)?;
 		}
 		doc.eof()?;
 		Ok(doc.into_root())
 	}
 
-	// parse file
-	pub fn parse_file<P>(filename: P, options: ParseOptions) -> GenResult<DocHolder>
-	where
-		P: AsRef<Path>,
-	{
-		let file_path = filename.as_ref();
-		let file_path = if file_path.is_absolute() {
-			file_path.to_path_buf()
-		} else {
-			env::current_dir()?.join(filename).canonicalize().unwrap()
-		};
-		let file = File::open(file_path)?;
-		let file = BufReader::new(file);
-		let mut doc = Doc::new();
-		doc.parse_options = options;
-		for line in file.lines() {
-			for c in line.unwrap().chars() {
-				doc.next(c)?;
-			}
-			doc.next('\n')?;
-		}
-		doc.eof()?;
-		Ok(doc.into_root())
-	}
 	// gather previous characters
 	fn chars_to_string(&self) -> String {
 		self.prev_chars.iter().collect::<String>()
@@ -1725,42 +1610,16 @@ impl Doc {
 		};
 	}
 	// read one char
-	fn next(&mut self, c: char) -> HResult {
+	fn next(&mut self, c: &char) -> HResult {
 		let handle = self.handle;
-		let _ = handle(self, c)?;
-		/*
-		 * do with code position
-		 */
-		let mut need_move_col = true;
-		// \r newline in early macos
-		if c == '\r' {
-			self.position.set_new_line();
-			need_move_col = false;
-		} else if c == '\n' {
-			// \n in windows, combine \r\n as newline
-			if self.prev_char == '\r' {
-				// do nothing, because did in \r
-			} else {
-				// set to nextline
-				self.position.set_new_line();
-			}
-			need_move_col = false;
-		}
-		// move one col for the code position
-		if need_move_col {
-			self.position.move_one();
-		} else {
-			self.position.index += 1;
-		}
+		let _ = handle(self, *c)?;
+		self.position.index += 1;
 		// check if special, and character is ok
 		if let Some((special, tag_name)) = self.in_special {
-			special.is_ok(&self.code_in, tag_name, c, self.position)?;
+			special.is_ok(&self.code_in, tag_name, *c, self.position)?;
 		}
 		// set the previous char
-		self.prev_char = c;
-		// add total chars
-		self.total_chars += 1;
-		// check special
+		self.prev_char = *c;
 		// parse ok
 		Ok(())
 	}
@@ -1791,10 +1650,6 @@ impl Doc {
 			Some((special, _)) => Some(special),
 			None => None,
 		};
-		// set prev node if need fix unescaped left angle bracket
-		if self.parse_options.auto_fix_unescaped_lt {
-			self.prev_node = Some(Rc::clone(&self.current_node));
-		}
 		// set current node to be new node
 		self.current_node = Rc::clone(&node);
 		// if is a tag node, add the tag node to chain nodes
@@ -1812,10 +1667,6 @@ impl Doc {
 		} else {
 			self.position.next_col()
 		};
-		// skip set depth for tag end
-		if node_type != TagEnd {
-			current_node.depth = self.chain_nodes.len() - 1;
-		}
 	}
 	// set spaces between tag
 	fn set_text_spaces_between(&mut self) {
@@ -1826,11 +1677,7 @@ impl Doc {
 	}
 	// make attr data
 	fn make_attr_data(&self, content: String) -> AttrData {
-		AttrData {
-			content,
-			begin_at: self.mem_position,
-			end_at: self.position,
-		}
+		AttrData { content }
 	}
 	// fix unclosed tag
 	fn fix_unclosed_tag(&mut self, unclosed: &[RefNode]) {
@@ -1843,7 +1690,6 @@ impl Doc {
 				let tag_name = meta.borrow().get_name(false);
 				let mut end = Node::new(NodeType::TagEnd, self.position);
 				end.content = Some(tag_name.chars().collect());
-				end.depth = index + 1;
 				end.parent = Some(Rc::downgrade(&tag_node));
 				end_tag = Some(end);
 			}
@@ -1961,7 +1807,6 @@ impl Doc {
 		match self.code_in {
 			TextNode => {
 				let mut last_node = self.current_node.borrow_mut();
-				last_node.depth = 1;
 				last_node.content = Some(self.prev_chars.clone());
 				if self.repeat_whitespace {
 					last_node.node_type = NodeType::SpacesBetweenTag;
@@ -1994,11 +1839,6 @@ impl Doc {
 	fn error(&self, kind: ErrorKind) -> HResult {
 		create_parse_error(kind, self.position)
 	}
-
-	// render for js
-	pub fn render_js_tree(tree: RefNode, options: &RenderOptions) -> String {
-		tree.borrow().build(options, false)
-	}
 }
 
 // get an element from string node map
@@ -2015,30 +1855,25 @@ impl DocHolder {
 	pub fn render(&self, options: &RenderOptions) -> String {
 		self.borrow().root.borrow().build(options, false)
 	}
+
 	// render text
 	pub fn render_text(&self, options: &RenderOptions) -> String {
 		self.borrow().root.borrow().build(options, true)
 	}
+
 	// borrow
 	pub fn borrow(&self) -> Ref<Doc> {
 		self.doc.borrow()
 	}
-	// borrow_mut
-	#[cfg(target_arch = "wasm32")]
-	pub(crate) fn borrow_mut(&self) -> RefMut<Doc> {
-		self.doc.borrow_mut()
-	}
+
 	// borrow mut
 	pub fn get_root_node(&self) -> RefNode {
 		Rc::clone(&self.borrow().root)
 	}
+
 	// get element by id
 	pub fn get_element_by_id(&self, id: &str) -> Option<RefNode> {
 		get_element(&self.borrow().id_tags.borrow(), id)
-	}
-	// get element by uuid
-	pub fn get_element_by_uuid(&self, uuid: &str) -> Option<RefNode> {
-		get_element(&self.borrow().tags.borrow(), uuid)
 	}
 }
 
