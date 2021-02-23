@@ -18,22 +18,83 @@ const ALLOC_CHAR_CAPACITY: usize = 50;
 const ALLOC_NODES_CAPACITY: usize = 20;
 
 pub type RenderEncoderOption = Box<dyn Fn(char) -> Option<EncodeType>>;
+
+#[derive(Debug)]
+pub struct CodeRegion {
+	index: usize,
+	line: usize,
+	col: usize,
+}
+
+impl CodeRegion {
+	fn from_context_index(context: &str, index: usize) -> Self {
+		let mut region = CodeRegion {
+			index,
+			line: 1,
+			col: 0,
+		};
+		let mut prev_char = '\0';
+		for (cur_index, c) in context.chars().into_iter().enumerate() {
+			if cur_index <= index {
+				let mut need_move_col = true;
+				// \r newline in early macos
+				if c == '\r' {
+					region.set_new_line();
+					need_move_col = false;
+				} else if c == '\n' {
+					// \n in windows, combine \r\n as newline
+					if prev_char == '\r' {
+						// do nothing, because did in \r
+					} else {
+						// set to nextline
+						region.set_new_line();
+					}
+					need_move_col = false;
+				}
+				// move one col for the code region
+				if need_move_col {
+					region.move_one();
+				}
+				prev_char = c;
+			}
+		}
+		region
+	}
+
+	// jump to new line
+	pub fn set_new_line(&mut self) {
+		self.line += 1;
+		self.col = 0;
+	}
+	// move to next col
+	pub fn move_one(&mut self) {
+		self.col += 1;
+		self.index += 1;
+	}
+}
+
+impl fmt::Display for CodeRegion {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let output = format!("[line:{},col:{},index:{}]", self.line, self.col, self.index);
+		f.write_str(output.as_str())
+	}
+}
 #[derive(Debug)]
 pub struct ParseError {
-	pub position: CodePosAt,
+	pub region: CodeRegion,
 	pub kind: ErrorKind,
 }
 
 impl ParseError {
-	pub fn new(kind: ErrorKind, position: CodePosAt) -> Box<Self> {
-		Box::new(ParseError { position, kind })
+	pub fn new(kind: ErrorKind, region: CodeRegion) -> Box<Self> {
+		Box::new(ParseError { region, kind })
 	}
 }
 
 // display parse error
 impl fmt::Display for ParseError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let output = format!("{}{}", self.position, self.kind);
+		let output = format!("{}{}", self.region, self.kind);
 		f.write_str(output.as_str())
 	}
 }
@@ -42,8 +103,11 @@ impl fmt::Display for ParseError {
 impl Error for ParseError {}
 
 // create parse error
-fn create_parse_error(kind: ErrorKind, position: CodePosAt) -> HResult {
-	let err = ParseError::new(kind, position);
+fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResult {
+	let err = ParseError::new(
+		kind,
+		CodeRegion::from_context_index(context, position.index),
+	);
 	Err(err)
 }
 
@@ -145,7 +209,7 @@ pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 			},
 		};
 		return special
-			.is_ok(&code_in, name, ' ', CodePosAt::default())
+			.is_ok(&code_in, name, ' ', CodeAt::default(), "")
 			.is_ok();
 	}
 	if is_plain_text_tag(name) {
@@ -217,25 +281,18 @@ fn get_content_decode(content: &Option<Vec<char>>) -> String {
  * the doc's position
 */
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
-pub struct CodePosAt {
+pub struct CodeAt {
 	pub index: usize,
 }
 
-impl fmt::Display for CodePosAt {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let output = format!("[index:{}]", self.index);
-		f.write_str(output.as_str())
-	}
-}
-
-impl CodePosAt {
+impl CodeAt {
 	// new
 	pub fn new(index: usize) -> Self {
-		CodePosAt { index }
+		CodeAt { index }
 	}
 	// create a begin position
 	pub fn begin() -> Self {
-		CodePosAt::new(0)
+		CodeAt::new(0)
 	}
 	// move to next col
 	pub fn move_one(&mut self) {
@@ -243,7 +300,7 @@ impl CodePosAt {
 	}
 	// get the next col position
 	pub fn next_col(&self) -> Self {
-		CodePosAt {
+		CodeAt {
 			index: self.index + 1,
 		}
 	}
@@ -396,10 +453,10 @@ pub struct Node {
 	pub node_type: NodeType,
 
 	// the node's start position '<'
-	pub begin_at: CodePosAt,
+	pub begin_at: CodeAt,
 
 	// the node's end position '>'
-	pub end_at: CodePosAt,
+	pub end_at: CodeAt,
 
 	// the end tag </xx> of the tag node
 	pub end_tag: Option<RefNode>,
@@ -447,7 +504,7 @@ impl fmt::Debug for Node {
 
 impl Node {
 	// create a new node
-	pub fn new(node_type: NodeType, code_at: CodePosAt) -> Self {
+	pub fn new(node_type: NodeType, code_at: CodeAt) -> Self {
 		Node {
 			node_type,
 			begin_at: code_at,
@@ -455,7 +512,7 @@ impl Node {
 			..Default::default()
 		}
 	}
-	pub fn create_text_node(content: &str, code_at: Option<CodePosAt>) -> Self {
+	pub fn create_text_node(content: &str, code_at: Option<CodeAt>) -> Self {
 		let node_type = if content.trim().is_empty() {
 			NodeType::SpacesBetweenTag
 		} else {
@@ -763,7 +820,8 @@ impl SpecialTag {
 		code_in: &CodeTypeIn,
 		tag_name: &str,
 		c: char,
-		position: CodePosAt,
+		position: CodeAt,
+		context: &str,
 	) -> HResult {
 		use CodeTypeIn::*;
 		use SpecialTag::*;
@@ -784,7 +842,7 @@ impl SpecialTag {
 							"the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
 							tag_name, code_in, position
 						);
-						return create_parse_error(ErrorKind::CommonError(message), position);
+						return create_parse_error(ErrorKind::CommonError(message), position, context);
 					}
 				};
 			}
@@ -796,51 +854,60 @@ impl SpecialTag {
 
 pub type GenResult<T> = Result<T, Box<dyn Error>>;
 pub type HResult = GenResult<()>;
-type NextHandle = fn(&mut Doc, char) -> HResult;
+type NextHandle = fn(&mut Doc, char, &str) -> HResult;
 
 /*
 * no operation, just placeholder for initialize doc
 */
-fn noop(_d: &mut Doc, _c: char) -> HResult {
+fn noop(_d: &mut Doc, _c: char, _content: &str) -> HResult {
 	Ok(())
 }
 
 /*
- * code_in: TextNode | Unkown | AbstractRoot
+ * code_in:  Unkown | AbstractRoot
 */
-fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
+fn parse_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	match c {
 		// match the tag start '<'
 		TAG_BEGIN_CHAR => {
-			if doc.code_in == TextNode {
-				let content = doc.clean_chars_return();
-				doc.current_node.borrow_mut().content = Some(content);
-				doc.check_textnode = if doc.repeat_whitespace {
-					Some(Rc::clone(&doc.current_node))
-				} else {
-					None
-				};
-				doc.set_tag_end_info();
-			}
 			doc.mem_position = doc.position;
 			doc.set_code_in(UnkownTag);
 		}
 		_ => {
-			if doc.code_in != TextNode {
-				// new text node
-				doc.add_new_node(Rc::new(RefCell::new(Node::new(
-					NodeType::Text,
-					doc.position,
-				))));
-				doc.code_in = TextNode;
-				doc.prev_chars.clear();
-				doc.repeat_whitespace = c.is_ascii_whitespace();
+			// new text node
+			doc.add_new_node(Rc::new(RefCell::new(Node::new(
+				NodeType::Text,
+				doc.position,
+			))));
+			doc.repeat_whitespace = c.is_ascii_whitespace();
+			doc.prev_chars.push(c);
+			doc.set_code_in(TextNode);
+		}
+	}
+	Ok(())
+}
+
+fn parse_text(doc: &mut Doc, c: char, _: &str) -> HResult {
+	use CodeTypeIn::*;
+	match c {
+		// match the tag start '<'
+		TAG_BEGIN_CHAR => {
+			let content = doc.clean_chars_return();
+			doc.current_node.borrow_mut().content = Some(content);
+			doc.check_textnode = if doc.repeat_whitespace {
+				Some(Rc::clone(&doc.current_node))
 			} else {
-				// check if repeat whitespace
-				if doc.repeat_whitespace {
-					doc.repeat_whitespace = c.is_ascii_whitespace();
-				}
+				None
+			};
+			doc.mem_position = doc.position;
+			doc.set_tag_end_info();
+			doc.set_code_in(UnkownTag);
+		}
+		_ => {
+			// check if repeat whitespace
+			if doc.repeat_whitespace {
+				doc.repeat_whitespace = c.is_ascii_whitespace();
 			}
 			doc.prev_chars.push(c);
 		}
@@ -851,7 +918,7 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: Tag | HTMLDOCTYPE
  */
-fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
+fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 	use CodeTypeIn::*;
 	let mut is_self_closing = false;
 	let mut tag_name: String = String::from("");
@@ -901,7 +968,8 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 													// is in svg or mathml
 												}
 												_ => {
-													return doc.error(ErrorKind::WrongSelfClosing(meta.name.clone()));
+													return doc
+														.error(ErrorKind::WrongSelfClosing(meta.name.clone()), context);
 												}
 											}
 										}
@@ -925,7 +993,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 									// if not in kv, quoted value should have spaces before.
 									if !meta.is_in_kv {
 										if !doc.prev_char.is_ascii_whitespace() {
-											return doc.error(ErrorKind::NoSpaceBetweenAttr(c));
+											return doc.error(ErrorKind::NoSpaceBetweenAttr(c), context);
 										}
 										// add new value-only attribute
 										meta.attrs.push(Default::default());
@@ -945,7 +1013,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 								}
 								'/' => {
 									if doc.code_in != Tag {
-										return doc.error(ErrorKind::WrongTag(String::from("/")));
+										return doc.error(ErrorKind::WrongTag(String::from("/")), context);
 									}
 									if meta.tag_in == Value {
 										// value allow string with slash '/'
@@ -961,7 +1029,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 									if meta.prev_is_key {
 										meta.is_in_kv = true;
 									} else {
-										return doc.error(ErrorKind::WrongTag(String::from("=")));
+										return doc.error(ErrorKind::WrongTag(String::from("=")), context);
 									}
 									// end the key or value
 									meta.tag_in = Wait;
@@ -985,10 +1053,16 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 										// check if key or value is ok
 										if tag_in_key {
 											if !is_char_available_in_key(&c) {
-												return doc.error(ErrorKind::CommonError("wrong key character".into()));
+												return doc.error(
+													ErrorKind::CommonError("wrong key character".into()),
+													context,
+												);
 											}
 										} else if !is_char_available_in_value(&c) {
-											return doc.error(ErrorKind::CommonError("wrong value character".into()));
+											return doc.error(
+												ErrorKind::CommonError("wrong value character".into()),
+												context,
+											);
 										}
 									}
 									doc.prev_chars.push(c);
@@ -1051,13 +1125,13 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 					if is_whitespace {
 						// tag name ended
 						if doc.code_in == HTMLDOCTYPE && cur_tag_name.to_ascii_uppercase() != "DOCTYPE" {
-							return doc.error(ErrorKind::WrongHtmlDoctype(c));
+							return doc.error(ErrorKind::WrongHtmlDoctype(c), context);
 						}
 					} else {
 						match doc.code_in {
 							HTMLDOCTYPE => {
 								// html doctype without any attribute
-								return doc.error(ErrorKind::WrongHtmlDoctype(c));
+								return doc.error(ErrorKind::WrongHtmlDoctype(c), context);
 							}
 							Tag => {
 								tag_name = cur_tag_name.clone();
@@ -1142,6 +1216,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 			// reset chars
 			doc.prev_chars.clear();
 		} else {
+			doc.prev_chars.clear();
 			doc.set_code_in(Unkown);
 		}
 	}
@@ -1151,7 +1226,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: TagEnd
  */
-fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
+fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 	use CodeTypeIn::*;
 	let mut unexpected_type: Option<CodeTypeIn> = None;
 	// the end tag
@@ -1171,7 +1246,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 					.get_name(false);
 				if last_tag_name.to_lowercase() == fix_end_tag_name {
 					if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
-						return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name));
+						return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
 					}
 					is_endtag_ok = true;
 				}
@@ -1223,6 +1298,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 			return create_parse_error(
 				ErrorKind::WrongEndTag(doc.chars_to_string()),
 				doc.current_node.borrow().begin_at,
+				context,
 			);
 		}
 		// auto fix unexpected endtag
@@ -1239,7 +1315,7 @@ fn parse_tagend(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: HTMLScript | HTMLStyle | EscapeableRawText
  */
-fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
+fn parse_special_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	let end_tag = doc
 		.detect
@@ -1291,11 +1367,11 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 				end.parent = Some(Rc::downgrade(&doc.current_node));
 				// set tag node's content, end_tag
 				let node = Rc::new(RefCell::new(end));
+				// here split off is quickly than clean_chars_return
+				let content = doc.prev_chars.split_off(0);
 				let mut current_node = doc.current_node.borrow_mut();
 				current_node.end_tag = Some(Rc::clone(&node));
-				let content = doc.prev_chars.clone();
 				current_node.content = Some(content);
-				doc.prev_chars.clear();
 				// remove current tag
 				doc.chain_nodes.pop();
 				doc.detect = None;
@@ -1312,7 +1388,7 @@ fn parse_special_tag(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: Comment|CDATA
  */
-fn parse_comment_or_cdata(doc: &mut Doc, c: char) -> HResult {
+fn parse_comment_or_cdata(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	// comment node
 	let end_symbol: char = if doc.code_in == Comment { '-' } else { ']' };
@@ -1338,12 +1414,12 @@ fn parse_comment_or_cdata(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: UnkownTag
  */
-fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
+fn parse_unkown_tag(doc: &mut Doc, c: char, context: &str) -> HResult {
 	use CodeTypeIn::*;
 	// check the tag type
 	match c {
 		'a'..='z' | 'A'..='Z' => {
-			// new tag node, add tag_index
+			// new tag node
 			let inner_node = Node::new(NodeType::Tag, doc.mem_position);
 			let node = Rc::new(RefCell::new(inner_node));
 			doc.add_new_node(node);
@@ -1365,7 +1441,11 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 		}
 		_ => {
 			if !doc.parse_options.auto_fix_unescaped_lt {
-				return create_parse_error(ErrorKind::WrongTag(c.to_string()), doc.mem_position);
+				return create_parse_error(
+					ErrorKind::WrongTag(c.to_string()),
+					doc.mem_position,
+					context,
+				);
 			}
 			// fix unescaped left angle bracket
 			doc.fix_unescaped_lt(c);
@@ -1377,7 +1457,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 /**
  * code_in: ExclamationBegin
  */
-fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
+fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 	use CodeTypeIn::*;
 	// maybe Comment | DOCTYPE<HTML> | XMLCDATA
 	let mut ignore_char = false;
@@ -1426,6 +1506,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
 				return create_parse_error(
 					ErrorKind::UnrecognizedTag(doc.chars_to_string(), next_chars.iter().collect::<String>()),
 					doc.mem_position,
+					context,
 				);
 			}
 		}
@@ -1458,6 +1539,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
 						return create_parse_error(
 							ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
 							doc.position,
+							context,
 						);
 					} else {
 						detect_type = DetectChar::XMLCDATA;
@@ -1466,11 +1548,16 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
 					return create_parse_error(
 						ErrorKind::CommonError("wrong <![CDATA tag can only used in Svg or MathML".into()),
 						doc.position,
+						context,
 					);
 				}
 			}
 			_ => {
-				return create_parse_error(ErrorKind::WrongTag(doc.chars_to_string()), doc.mem_position);
+				return create_parse_error(
+					ErrorKind::WrongTag(doc.chars_to_string()),
+					doc.mem_position,
+					context,
+				);
 			}
 		};
 		doc.detect = Some(DETECT_CHAR_MAP.get(&detect_type).unwrap().to_vec());
@@ -1487,8 +1574,8 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
 */
 pub struct Doc {
 	code_in: CodeTypeIn,
-	position: CodePosAt,
-	mem_position: CodePosAt,
+	position: CodeAt,
+	mem_position: CodeAt,
 	detect: Option<Vec<char>>,
 	prev_chars: Vec<char>,
 	prev_char: char,
@@ -1498,7 +1585,6 @@ pub struct Doc {
 	repeat_whitespace: bool,
 	check_textnode: Option<RefNode>,
 	handle: NextHandle,
-	pub chars: Vec<char>,
 	pub parse_options: ParseOptions,
 	pub root: RefNode,
 	pub id_tags: Rc<RefCell<StringNodeMap>>,
@@ -1513,7 +1599,7 @@ impl Doc {
 	fn new() -> Self {
 		let node = Rc::new(RefCell::new(Node::new(
 			NodeType::AbstractRoot,
-			CodePosAt::begin(),
+			CodeAt::begin(),
 		)));
 		let ref_node = Rc::clone(&node);
 		let current_node = Rc::clone(&node);
@@ -1526,13 +1612,12 @@ impl Doc {
 		chain_nodes.push(ref_node);
 		let mut doc = Doc {
 			code_in: CodeTypeIn::AbstractRoot,
-			position: CodePosAt::begin(),
-			mem_position: CodePosAt::begin(),
+			position: CodeAt::begin(),
+			mem_position: CodeAt::begin(),
 			prev_char: ' ',
 			prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
 			chain_nodes,
 			current_node,
-			chars: Vec::new(),
 			detect: None,
 			in_special: None,
 			parse_options: Default::default(),
@@ -1549,7 +1634,7 @@ impl Doc {
 
 	// init, set handle
 	fn init(&mut self) {
-		self.handle = parse_wait_and_text;
+		self.handle = parse_wait;
 	}
 
 	// into root
@@ -1564,9 +1649,9 @@ impl Doc {
 		let mut doc = Doc::new();
 		doc.parse_options = options;
 		for c in content.chars() {
-			doc.next(&c)?;
+			doc.next(&c, content)?;
 		}
-		doc.eof()?;
+		doc.eof(content)?;
 		Ok(doc.into_root())
 	}
 
@@ -1574,6 +1659,7 @@ impl Doc {
 	fn chars_to_string(&self) -> String {
 		self.prev_chars.iter().collect::<String>()
 	}
+
 	// clean the previous characters and return
 	fn clean_chars_return(&mut self) -> Vec<char> {
 		let mut content: Vec<char> = Vec::with_capacity(self.prev_chars.len());
@@ -1586,8 +1672,11 @@ impl Doc {
 		self.code_in = code_in;
 		use CodeTypeIn::*;
 		match code_in {
-			TextNode | Unkown | AbstractRoot => {
-				self.handle = parse_wait_and_text;
+			Unkown | AbstractRoot => {
+				self.handle = parse_wait;
+			}
+			TextNode => {
+				self.handle = parse_text;
 			}
 			Tag | HTMLDOCTYPE => {
 				self.handle = parse_tag_or_doctype;
@@ -1610,13 +1699,13 @@ impl Doc {
 		};
 	}
 	// read one char
-	fn next(&mut self, c: &char) -> HResult {
+	fn next(&mut self, c: &char, content: &str) -> HResult {
 		let handle = self.handle;
-		let _ = handle(self, *c)?;
+		let _ = handle(self, *c, content)?;
 		self.position.index += 1;
 		// check if special, and character is ok
 		if let Some((special, tag_name)) = self.in_special {
-			special.is_ok(&self.code_in, tag_name, *c, self.position)?;
+			special.is_ok(&self.code_in, tag_name, *c, self.position, content)?;
 		}
 		// set the previous char
 		self.prev_char = *c;
@@ -1681,7 +1770,7 @@ impl Doc {
 	}
 	// fix unclosed tag
 	fn fix_unclosed_tag(&mut self, unclosed: &[RefNode]) {
-		for (index, tag_node) in unclosed.iter().enumerate() {
+		for tag_node in unclosed {
 			let mut end_tag: Option<Node> = None;
 			if let Some(meta) = &tag_node.borrow_mut().meta {
 				// set it's meta as auto fix
@@ -1696,30 +1785,6 @@ impl Doc {
 			if let Some(end_tag) = end_tag {
 				tag_node.borrow_mut().end_tag = Some(Rc::new(RefCell::new(end_tag)));
 			}
-			/* should obey the nested tag rules */
-			// if should_single {
-			// 	let mut tag_node = tag_node.borrow_mut();
-			// 	let cur_depth = tag_node.depth + 1;
-			// 	let parent = tag_node.parent.as_ref().unwrap().upgrade().unwrap();
-			// 	// change all childs's parent and clear
-			// 	if let Some(childs) = &tag_node.childs {
-			// 		if !childs.is_empty() {
-			// 			for child_node in childs.iter() {
-			// 				if let Some(childs) = parent.borrow_mut().childs.as_mut() {
-			// 					childs.push(Rc::clone(child_node))
-			// 				};
-			// 				let mut child_node = child_node.borrow_mut();
-			// 				child_node.parent = Some(Rc::downgrade(&parent));
-			// 				child_node.depth = cur_depth;
-			// 				if let Some(meta) = &child_node.meta {
-			// 					meta.borrow_mut().auto_fix = true;
-			// 				}
-			// 			}
-			// 		}
-			// 	}
-			// 	// clear childs
-			// 	tag_node.childs = None;
-			// }
 		}
 	}
 	// fix unescaped left angle bracket
@@ -1731,8 +1796,10 @@ impl Doc {
 			NodeType::Text | NodeType::SpacesBetweenTag => {
 				// text node or spaces between
 				if let Some(content) = &mut self.current_node.borrow_mut().content {
-					self.prev_chars = content.clone();
-					self.prev_chars.append(&mut chars);
+					let mut prev_chars: Vec<char> = Vec::with_capacity(content.len() + chars.len());
+					prev_chars.append(content);
+					prev_chars.append(&mut chars);
+					self.prev_chars = prev_chars;
 				}
 				// change node type if spaces between
 				if matches!(node_type, NodeType::SpacesBetweenTag) {
@@ -1772,7 +1839,9 @@ impl Doc {
 			let childs = parent.childs.get_or_insert(Vec::new());
 			current_node.borrow_mut().index = childs.len();
 			childs.push(Rc::clone(&current_node));
+			// set current node as text node
 			self.current_node = current_node;
+			// set prev chars
 			self.prev_chars = chars;
 		}
 		self.repeat_whitespace = false;
@@ -1783,7 +1852,7 @@ impl Doc {
 		self.in_special.map(|(special, _)| special)
 	}
 	// end of the doc
-	fn eof(&mut self) -> HResult {
+	fn eof(&mut self, context: &str) -> HResult {
 		let cur_depth = self.chain_nodes.len();
 		// check if all tags are closed correctly.
 		if cur_depth > 1 {
@@ -1796,7 +1865,7 @@ impl Doc {
 					.expect("tag node's meta must have")
 					.borrow()
 					.name;
-				return create_parse_error(ErrorKind::UnclosedTag(name.to_owned()), begin_at);
+				return create_parse_error(ErrorKind::UnclosedTag(name.to_owned()), begin_at, context);
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
@@ -1821,6 +1890,7 @@ impl Doc {
 					return create_parse_error(
 						ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
 						self.current_node.borrow().begin_at,
+						context,
 					);
 				}
 			}
@@ -1828,6 +1898,7 @@ impl Doc {
 				return create_parse_error(
 					ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
 					self.current_node.borrow().begin_at,
+					context,
 				);
 			}
 		}
@@ -1836,8 +1907,8 @@ impl Doc {
 		Ok(())
 	}
 	// return error with doc.position
-	fn error(&self, kind: ErrorKind) -> HResult {
-		create_parse_error(kind, self.position)
+	fn error(&self, kind: ErrorKind, context: &str) -> HResult {
+		create_parse_error(kind, self.position, context)
 	}
 }
 
