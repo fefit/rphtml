@@ -1,7 +1,7 @@
 use crate::config::{ParseOptions, RenderOptions};
-use crate::util::{is_char_available_in_key, is_char_available_in_value, is_identity};
+use crate::util::{is_char_available_in_key, is_char_available_in_value};
 
-use htmlentity::entity::{decode_chars, encode, EncodeType, Entity, EntitySet};
+use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::*;
@@ -365,6 +365,7 @@ pub struct TagMeta {
 
 	#[serde(skip)]
 	is_in_kv: bool,
+
 	#[serde(skip)]
 	is_in_translate: bool,
 
@@ -373,6 +374,7 @@ pub struct TagMeta {
 
 	#[serde(skip)]
 	is_end: bool,
+
 	pub self_closed: bool,
 	pub auto_fix: bool,
 	pub name: String,
@@ -876,10 +878,6 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 		// match the tag start '<'
 		TAG_BEGIN_CHAR => {
 			if doc.code_in == TextNode {
-				// finish entity
-				if doc.in_entity {
-					doc.end_entity();
-				}
 				let content = doc.clean_chars_return();
 				doc.current_node.borrow_mut().content = Some(content);
 				doc.check_textnode = if doc.repeat_whitespace {
@@ -893,13 +891,6 @@ fn parse_wait_and_text(doc: &mut Doc, c: char) -> HResult {
 			doc.set_code_in(UnkownTag);
 		}
 		_ => {
-			// only whitespace allowed
-			/* if cur_depth == 1 && !c.is_ascii_whitespace() {
-				return create_parse_error(
-					ErrorKind::WrongRootTextNode(c.to_string()),
-					doc.position,
-				);
-			} */
 			if doc.code_in != TextNode {
 				// new text node
 				doc.add_new_node(Rc::new(RefCell::new(Node::new(
@@ -944,9 +935,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 						let tag_in_wait = meta.tag_in == Wait;
 						let tag_in_key = meta.tag_in == Key;
 						let mut is_end_key_or_value = false;
-						// tag in wait, if prev char is '/', the current char must be the end of tag
+						// tag in wait, if prev char is '/'
+						// the current char should be the end of tag, otherwise trigger a parse error warning
 						if tag_in_wait && doc.prev_char == '/' && c != TAG_END_CHAR {
-							return doc.error(ErrorKind::UnexpectedCharacter(c));
+							// warning
 						}
 						if c.is_ascii_whitespace() {
 							// if tag in wait state, ignore whitespaces, otherwise, is an end of key or value
@@ -1138,9 +1130,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char) -> HResult {
 							_ => unreachable!("just detect code in HTMLDOCTYPE and TAG"),
 						}
 					}
-					if !is_identity(&doc.prev_chars) {
-						return doc.error(ErrorKind::WrongTagIdentity(cur_tag_name));
-					}
+					/* All characters except '>', whitespaces, '/' that have detected above are allowed identities */
+					// if !is_identity(&doc.prev_chars) {
+					// 	return doc.error(ErrorKind::WrongTagIdentity(cur_tag_name));
+					// }
 					let meta = TagMeta {
 						name: cur_tag_name,
 						attrs: Vec::with_capacity(5),
@@ -1440,7 +1433,11 @@ fn parse_unkown_tag(doc: &mut Doc, c: char) -> HResult {
 			doc.set_code_in(ExclamationBegin);
 		}
 		_ => {
-			return create_parse_error(ErrorKind::WrongTag(c.to_string()), doc.mem_position);
+			if !doc.parse_options.auto_fix_unescaped_lt {
+				return create_parse_error(ErrorKind::WrongTag(c.to_string()), doc.mem_position);
+			}
+			// fix unescaped left angle bracket
+			doc.fix_unescaped_lt(c);
 		}
 	};
 	Ok(())
@@ -1522,7 +1519,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char) -> HResult {
 							.borrow()
 							.meta
 							.as_ref()
-							.expect("chain nodes must tag node")
+							.expect("Chain nodes must all be tag nodes")
 							.borrow()
 							.name
 							.as_str()
@@ -1566,10 +1563,9 @@ pub struct Doc {
 	prev_char: char,
 	chain_nodes: Vec<RefNode>,
 	current_node: RefNode,
+	prev_node: Option<RefNode>,
 	in_special: Option<(SpecialTag, &'static str)>,
 	repeat_whitespace: bool,
-	in_entity: bool,
-	entity: Entity,
 	check_textnode: Option<RefNode>,
 	handle: NextHandle,
 	pub total_chars: usize,
@@ -1609,11 +1605,10 @@ impl Doc {
 			prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
 			chain_nodes,
 			current_node,
+			prev_node: None,
 			total_chars: 0,
 			detect: None,
 			in_special: None,
-			in_entity: false,
-			entity: Entity::new(),
 			parse_options: Default::default(),
 			repeat_whitespace: false,
 			check_textnode: None,
@@ -1698,12 +1693,7 @@ impl Doc {
 		content.append(&mut self.prev_chars);
 		content
 	}
-	// finish entity
-	fn end_entity(&mut self) {
-		self.prev_chars.extend(self.entity.get_chars());
-		self.in_entity = false;
-		self.entity = Entity::new();
-	}
+
 	// set code_in
 	fn set_code_in(&mut self, code_in: CodeTypeIn) {
 		self.code_in = code_in;
@@ -1799,6 +1789,10 @@ impl Doc {
 			Some((special, _)) => Some(special),
 			None => None,
 		};
+		// set prev node if need fix unescaped left angle bracket
+		if self.parse_options.auto_fix_unescaped_lt {
+			self.prev_node = Some(Rc::clone(&self.current_node));
+		}
 		// set current node to be new node
 		self.current_node = Rc::clone(&node);
 		// if is a tag node, add the tag node to chain nodes
@@ -1840,7 +1834,6 @@ impl Doc {
 	fn fix_unclosed_tag(&mut self, unclosed: &[RefNode]) {
 		for (index, tag_node) in unclosed.iter().enumerate() {
 			let mut end_tag: Option<Node> = None;
-			let mut should_single = false;
 			if let Some(meta) = &tag_node.borrow_mut().meta {
 				// set it's meta as auto fix
 				meta.borrow_mut().auto_fix = true;
@@ -1855,30 +1848,87 @@ impl Doc {
 			if let Some(end_tag) = end_tag {
 				tag_node.borrow_mut().end_tag = Some(Rc::new(RefCell::new(end_tag)));
 			}
-			if should_single {
-				let mut tag_node = tag_node.borrow_mut();
-				let cur_depth = tag_node.depth + 1;
-				let parent = tag_node.parent.as_ref().unwrap().upgrade().unwrap();
-				// change all childs's parent and clear
-				if let Some(childs) = &tag_node.childs {
-					if !childs.is_empty() {
-						for child_node in childs.iter() {
-							if let Some(childs) = parent.borrow_mut().childs.as_mut() {
-								childs.push(Rc::clone(child_node))
-							};
-							let mut child_node = child_node.borrow_mut();
-							child_node.parent = Some(Rc::downgrade(&parent));
-							child_node.depth = cur_depth;
-							if let Some(meta) = &child_node.meta {
-								meta.borrow_mut().auto_fix = true;
-							}
-						}
-					}
+			/* should obey the nested tag rules */
+			// if should_single {
+			// 	let mut tag_node = tag_node.borrow_mut();
+			// 	let cur_depth = tag_node.depth + 1;
+			// 	let parent = tag_node.parent.as_ref().unwrap().upgrade().unwrap();
+			// 	// change all childs's parent and clear
+			// 	if let Some(childs) = &tag_node.childs {
+			// 		if !childs.is_empty() {
+			// 			for child_node in childs.iter() {
+			// 				if let Some(childs) = parent.borrow_mut().childs.as_mut() {
+			// 					childs.push(Rc::clone(child_node))
+			// 				};
+			// 				let mut child_node = child_node.borrow_mut();
+			// 				child_node.parent = Some(Rc::downgrade(&parent));
+			// 				child_node.depth = cur_depth;
+			// 				if let Some(meta) = &child_node.meta {
+			// 					meta.borrow_mut().auto_fix = true;
+			// 				}
+			// 			}
+			// 		}
+			// 	}
+			// 	// clear childs
+			// 	tag_node.childs = None;
+			// }
+		}
+	}
+	// fix unescaped left angle bracket
+	fn fix_unescaped_lt(&mut self, ch: char) {
+		let mut chars = vec!['&', 'l', 't', ';', ch];
+		let mut parent: Option<RefNode> = None;
+		let node_type = self.current_node.borrow().node_type;
+		match node_type {
+			NodeType::Text | NodeType::SpacesBetweenTag => {
+				// text node or spaces between
+				if let Some(content) = &mut self.current_node.borrow_mut().content {
+					self.prev_chars = content.clone();
+					self.prev_chars.append(&mut chars);
 				}
-				// clear childs
-				tag_node.childs = None;
+				// change node type if spaces between
+				if matches!(node_type, NodeType::SpacesBetweenTag) {
+					self.current_node.borrow_mut().node_type = NodeType::Text;
+				}
+			}
+			NodeType::Tag => {
+				// tag, check if auto fix or self closing
+				let is_closed = self
+					.current_node
+					.borrow()
+					.meta
+					.as_ref()
+					.map_or(false, |meta| {
+						let meta = &meta.borrow();
+						meta.self_closed || meta.auto_fix
+					});
+				if !is_closed {
+					parent = Some(Rc::clone(&self.current_node));
+				} else {
+					parent = self
+						.current_node
+						.borrow()
+						.parent
+						.as_ref()
+						.map(|node| node.upgrade().expect("Parent node"));
+				}
+			}
+			_ => {
+				parent = Some(Rc::clone(&self.root));
 			}
 		}
+		if let Some(parent) = &parent {
+			let text_node = Node::new(NodeType::Text, Default::default());
+			let current_node = Rc::new(RefCell::new(text_node));
+			let mut parent = parent.borrow_mut();
+			let childs = parent.childs.get_or_insert(Vec::new());
+			current_node.borrow_mut().index = childs.len();
+			childs.push(Rc::clone(&current_node));
+			self.current_node = current_node;
+			self.prev_chars = chars;
+		}
+		self.repeat_whitespace = false;
+		self.set_code_in(CodeTypeIn::TextNode);
 	}
 	// is in svg or mathml
 	fn check_special(&self) -> Option<SpecialTag> {
@@ -1917,7 +1967,15 @@ impl Doc {
 				last_node.end_at = self.position;
 			}
 			Unkown | AbstractRoot => {
-				// OK
+				// end ok
+			}
+			Tag => {
+				if !self.parse_options.auto_fix_unclosed_tag {
+					return create_parse_error(
+						ErrorKind::UnclosedTag(format!("{:?}", self.code_in)),
+						self.current_node.borrow().begin_at,
+					);
+				}
 			}
 			_ => {
 				return create_parse_error(
