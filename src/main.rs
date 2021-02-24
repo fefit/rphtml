@@ -4959,9 +4959,9 @@ fn main() -> Result<(), Box<dyn Error>> {
   "##;
 	// let code = format!("<script>{}</script>", code);
 	let start_time = SystemTime::now();
-	let total = 200;
+	let total = 500;
 	for _ in 0..total {
-		Doc::parse(
+		let doc = Doc::parse(
 			code,
 			ParseOptions {
 				auto_fix_unexpected_endtag: true,
@@ -4971,6 +4971,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 				..Default::default()
 			},
 		)?;
+		// println!("doc:{}", doc.render(&Default::default()));
 	}
 	let used_time = SystemTime::now().duration_since(start_time)?;
 	println!("Total used: {:?}, Per: {:?}", used_time, used_time / total);
