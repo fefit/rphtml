@@ -738,25 +738,7 @@ impl Node {
 		}
 		self.build_tree(options, status)
 	}
-	// check if alone tag
-	pub fn is_alone_tag(&self) -> bool {
-		if let Some(childs) = &self.childs {
-			match childs.len() {
-				1 => childs[0].borrow().node_type == NodeType::Text,
-				num => {
-					if num <= 3 {
-						return childs.iter().all(|child| {
-							let node_type = child.borrow().node_type;
-							node_type == NodeType::SpacesBetweenTag || node_type == NodeType::Text
-						});
-					}
-					false
-				}
-			}
-		} else {
-			self.node_type == NodeType::Tag
-		}
-	}
+
 	// append a child
 	// is document node
 	pub fn is_document(&self) -> (bool, bool) {
@@ -769,15 +751,16 @@ impl Node {
 				for child in childs {
 					let child_node = child.borrow();
 					match child_node.node_type {
-						Comment | SpacesBetweenTag => {
-							// allowed in document
+						Comment | SpacesBetweenTag | HTMLDOCTYPE => {
+							// the above types are allowed in document
 						}
 						Tag => {
 							if find_html {
 								syntax_ok = false;
+								break;
 							} else {
 								// check if is html tag
-								if let Some(meta) = &self.meta {
+								if let Some(meta) = &child_node.meta {
 									if meta.borrow().get_name(true) == "html" {
 										find_html = true;
 										is_document = true;
@@ -795,11 +778,11 @@ impl Node {
 					}
 				}
 			}
+			if !is_document {
+				syntax_ok = true;
+			}
 		}
-		if is_document {
-			return (is_document, syntax_ok);
-		}
-		(false, true)
+		(is_document, syntax_ok)
 	}
 	// check if two RefNode is same
 	pub fn is_same(cur: &RefNode, other: &RefNode) -> bool {
@@ -1287,9 +1270,8 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 		}
 		// unexpected end tag
 		unexpected_type = Some(Unkown);
-	}
-	// match a left angle bracket '<', unexpected end tag
-	if c == TAG_BEGIN_CHAR {
+	} else if c == TAG_BEGIN_CHAR {
+		// match a left angle bracket '<', unexpected end tag
 		unexpected_type = Some(UnkownTag);
 	}
 	// unexpected end tag
@@ -1448,7 +1430,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char, context: &str) -> HResult {
 				);
 			}
 			// fix unescaped left angle bracket
-			doc.fix_unescaped_lt(c);
+			doc.fix_unescaped_lt(c, context)?;
 		}
 	};
 	Ok(())
@@ -1788,10 +1770,15 @@ impl Doc {
 		}
 	}
 	// fix unescaped left angle bracket
-	fn fix_unescaped_lt(&mut self, ch: char) {
-		let mut chars = vec!['&', 'l', 't', ';', ch];
+	fn fix_unescaped_lt(&mut self, c: char, context: &str) -> HResult {
+		let mut chars = vec!['&', 'l', 't', ';'];
 		let mut parent: Option<RefNode> = None;
+		let mut need_parent = false;
 		let node_type = self.current_node.borrow().node_type;
+		let is_end_text = c == TAG_BEGIN_CHAR;
+		if !is_end_text {
+			chars.push(c);
+		}
 		match node_type {
 			NodeType::Text | NodeType::SpacesBetweenTag => {
 				// text node or spaces between
@@ -1820,15 +1807,18 @@ impl Doc {
 				if !is_closed {
 					parent = Some(Rc::clone(&self.current_node));
 				} else {
-					parent = self
-						.current_node
-						.borrow()
-						.parent
-						.as_ref()
-						.map(|node| node.upgrade().expect("Tag node must have a parent node"));
+					need_parent = true;
 				}
 			}
 			_ => {
+				need_parent = true;
+			}
+		}
+		if need_parent {
+			if !self.chain_nodes.is_empty() {
+				let index = self.chain_nodes.len() - 1;
+				parent = Some(Rc::clone(&self.chain_nodes[index]));
+			} else {
 				parent = Some(Rc::clone(&self.root));
 			}
 		}
@@ -1846,6 +1836,15 @@ impl Doc {
 		}
 		self.repeat_whitespace = false;
 		self.set_code_in(CodeTypeIn::TextNode);
+		// if is end of text<the tag left character>
+		// should move back one character
+		if is_end_text {
+			// execute the text node handle
+			// the position index will keep because it doesn't call 'next' but `handle`
+			let handle = self.handle;
+			handle(self, c, context)?;
+		}
+		Ok(())
 	}
 	// is in svg or mathml
 	fn check_special(&self) -> Option<SpecialTag> {

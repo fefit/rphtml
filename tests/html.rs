@@ -419,7 +419,7 @@ fn test_auto_fix_unclosed_tag() {
 }
 
 #[test]
-fn test_auto_fix_unexpected_endtag() {
+fn test_auto_fix_unexpected_endtag() -> HResult {
 	fn parse_param(content: &str) -> GenResult<DocHolder> {
 		Doc::parse(
 			content,
@@ -433,10 +433,27 @@ fn test_auto_fix_unexpected_endtag() {
 	let code = r##"text</a><b></b>"##;
 	assert!(parse(code).is_err());
 	assert!(parse_param(code).is_ok());
+	assert_eq!(
+		parse_param(code)?.render(&Default::default()),
+		"text<b></b>"
+	);
 	// case2
 	let code = r##"<b>text</a></b>"##;
 	assert!(parse(code).is_err());
 	assert!(parse_param(code).is_ok());
+	assert_eq!(
+		parse_param(code)?.render(&Default::default()),
+		"<b>text</b>"
+	);
+	// case3
+	let code = r##"<b>text</a</b>"##;
+	assert!(parse(code).is_err());
+	assert!(parse_param(code).is_ok());
+	assert_eq!(
+		parse_param(code)?.render(&Default::default()),
+		"<b>text</b>"
+	);
+	Ok(())
 }
 #[test]
 fn test_attr_nospace_splitor() {
@@ -447,9 +464,18 @@ fn test_attr_nospace_splitor() {
 
 #[test]
 fn test_wrong_doctype() {
+	// wrong doctype name
 	let code = r##"<!DOCTYP html>"##;
 	let result = parse(code);
 	assert!(result.is_err());
+	// doctype without any attribute
+	let code = r##"<!DOCTYPE>"##;
+	let result = parse(code);
+	assert!(result.is_err());
+	// right doctype, has an attribute, but don't validate more
+	let code = r##"<!DOCTYPE HTML>"##;
+	let result = parse(code);
+	assert!(result.is_ok());
 }
 
 #[test]
@@ -485,5 +511,109 @@ fn test_render_decode() -> HResult {
 		..Default::default()
 	});
 	assert_eq!(render_code, "<div><span>'\"</span></div>");
+	Ok(())
+}
+
+#[test]
+fn test_auto_fix_unescaped_lt() -> HResult {
+	let code = r##"<div><</div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<div>&lt;</div>");
+	// child of abstract root
+	let code = r##"<<div></div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "&lt;<div></div>");
+	// child of tag node
+	let code = r##"<div><<div></div></div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<div>&lt;<div></div></div>");
+	// prev node is self closing tag
+	let code = r##"<br><<div></div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<br>&lt;<div></div>");
+	// wrong tag name
+	let code = r##"<div><span></span><123</div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<div><span></span>&lt;123</div>");
+	let root = doc.get_root_node();
+	let root = root.borrow();
+	let childs = root.childs.as_ref().unwrap();
+	let div = childs[0].borrow();
+	let div_childs = div.childs.as_ref().unwrap();
+	assert_eq!(div_childs.len(), 2);
+	assert_eq!(div_childs[1].borrow().node_type, NodeType::Text);
+	assert_eq!(div_childs[1].borrow().index, 1);
+	Ok(())
+}
+
+#[test]
+fn test_get_element_by_id() -> HResult {
+	let code = r##"<div id="mydiv"></div><p id=haha></p>"##;
+	let doc = parse(code)?;
+	assert!(doc.get_element_by_id("mydiv").is_some());
+	assert!(doc.get_element_by_id("haha").is_some());
+	assert!(doc.get_element_by_id("none").is_none());
+	Ok(())
+}
+
+#[test]
+fn test_is_document() -> HResult {
+	// normal document
+	let code = r##"<!--MYHTML--><!DOCTYPE html> <html></html>   "##;
+	let doc = parse(code)?;
+	assert_eq!(doc.get_root_node().borrow().is_document(), (true, true));
+	// wrong tag or text node
+	let code = r##"<!DOCTYPE html><html></html><div></div>"##;
+	let doc = parse(code)?;
+	assert_eq!(doc.get_root_node().borrow().is_document(), (true, false));
+	// wrong html element
+	let code = r##"<!DOCTYPE html><body></body>"##;
+	let doc = parse(code)?;
+	assert_eq!(doc.get_root_node().borrow().is_document(), (false, true));
 	Ok(())
 }
