@@ -554,6 +554,38 @@ fn test_auto_fix_unescaped_lt() -> HResult {
 	assert!(doc.is_ok());
 	let doc = doc?;
 	assert_eq!(render(&doc), "<div>&lt;<div></div></div>");
+	// prev is text node
+	let code = r##"<div>abc<</div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<div>abc&lt;</div>");
+	// prev is spaces
+	let code = r##"<div> <</div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<div> &lt;</div>");
+	let root = &doc.get_root_node();
+	let childs = &root.borrow().childs;
+	let childs = childs.as_ref().unwrap();
+	let div = &childs[0].borrow();
+	let div_childs = div.childs.as_ref().unwrap();
+	assert_eq!(div_childs[0].borrow().node_type, NodeType::Text);
 	// prev node is self closing tag
 	let code = r##"<br><<div></div>"##;
 	assert!(parse(code).is_err());
