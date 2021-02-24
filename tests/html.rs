@@ -567,6 +567,20 @@ fn test_auto_fix_unescaped_lt() -> HResult {
 	assert!(doc.is_ok());
 	let doc = doc?;
 	assert_eq!(render(&doc), "<br>&lt;<div></div>");
+	// prev node is self closing tag
+	let code = r##"<p/><<div></div>"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			allow_self_closing: true,
+			auto_fix_unescaped_lt: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	let doc = doc?;
+	assert_eq!(render(&doc), "<p />&lt;<div></div>");
 	// wrong tag name
 	let code = r##"<div><span></span><123</div>"##;
 	assert!(parse(code).is_err());
@@ -616,4 +630,47 @@ fn test_is_document() -> HResult {
 	let doc = parse(code)?;
 	assert_eq!(doc.get_root_node().borrow().is_document(), (false, true));
 	Ok(())
+}
+
+#[test]
+fn test_is_same() -> HResult {
+	// normal document
+	let code = r##"<div id="same"></div>"##;
+	let doc = parse(code)?;
+	let root = doc.get_root_node();
+	let childs = &root.borrow().childs;
+	let childs = childs.as_ref().unwrap();
+	let div = &childs[0];
+	assert!(Node::is_same(div, &doc.get_element_by_id("same").unwrap()));
+	Ok(())
+}
+
+#[test]
+fn test_eof() -> HResult {
+	// not end comment
+	let code = r##"<div></div><!--"##;
+	assert!(parse(code).is_err());
+	// not end text
+	let code = r##"<div></div>abc"##;
+	assert!(parse(code).is_ok());
+	assert_eq!(render(&parse(code)?), "<div></div>abc");
+	// not end tag
+	let code = r##"<div></div><div>abc"##;
+	assert!(parse(code).is_err());
+	let doc = Doc::parse(
+		code,
+		ParseOptions {
+			auto_fix_unclosed_tag: true,
+			..Default::default()
+		},
+	);
+	assert!(doc.is_ok());
+	assert_eq!(render(&doc?), "<div></div><div>abc</div>");
+	Ok(())
+}
+
+#[test]
+fn test_parse_file() {
+	let doc = Doc::parse_file("./cases/full.html", Default::default());
+	assert!(doc.is_ok());
 }

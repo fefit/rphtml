@@ -3,11 +3,18 @@ use crate::util::{is_char_available_in_key, is_char_available_in_value};
 
 use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
 use lazy_static::lazy_static;
-use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::rc::{Rc, Weak};
+use std::{
+	cell::{Ref, RefCell},
+	env,
+	fs::File,
+	io::prelude::*,
+	io::BufReader,
+	path::Path,
+};
 use thiserror::Error;
 /*
 * constants
@@ -1637,6 +1644,34 @@ impl Doc {
 		Ok(doc.into_root())
 	}
 
+	// parse file
+	pub fn parse_file<P>(filename: P, options: ParseOptions) -> GenResult<DocHolder>
+	where
+		P: AsRef<Path>,
+	{
+		let file_path = filename.as_ref();
+		let file_path = if file_path.is_absolute() {
+			file_path.to_path_buf()
+		} else {
+			env::current_dir()?.join(filename).canonicalize().unwrap()
+		};
+		let file = File::open(file_path)?;
+		let file = BufReader::new(file);
+		let mut doc = Doc::new();
+		let mut content = String::with_capacity(500);
+		doc.parse_options = options;
+		for line in file.lines() {
+			let line_content = line.unwrap();
+			content.push_str(&line_content);
+			for c in line_content.chars() {
+				doc.next(&c, &content)?;
+			}
+			doc.next(&'\n', &content)?;
+		}
+		doc.eof(&content)?;
+		Ok(doc.into_root())
+	}
+
 	// gather previous characters
 	fn chars_to_string(&self) -> String {
 		self.prev_chars.iter().collect::<String>()
@@ -1684,7 +1719,7 @@ impl Doc {
 	fn next(&mut self, c: &char, content: &str) -> HResult {
 		let handle = self.handle;
 		let _ = handle(self, *c, content)?;
-		self.position.index += 1;
+		self.position.move_one();
 		// check if special, and character is ok
 		if let Some((special, tag_name)) = self.in_special {
 			special.is_ok(&self.code_in, tag_name, *c, self.position, content)?;
