@@ -1,10 +1,10 @@
 [package]
 name = "rphtml"
-version = "0.3.11"
+version = "0.4.0"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
-description = "A html parser written in rust, use wasm-pack for Nodejs package."
+description = "A html parser written in rust."
 keywords = ["html", "parser", "html-parser", "html-minify", "html-render"]
 repository = "https://github.com/fefit/rphtml"
 categories = ["parser-implementations", "wasm"]
@@ -28,7 +28,3 @@ wasm-bindgen-test = "0.3.18"
 [[bench]]
 name = "benchmark"
 harness = false
-
-[[bin]]
-name="rphtml"
-path="src/main.rs"

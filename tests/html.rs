@@ -1,6 +1,5 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
-use std::error::Error;
 
 fn parse(code: &str) -> GenResult<DocHolder> {
 	let doc = Doc::parse(code, Default::default())?;
