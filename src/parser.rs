@@ -376,6 +376,11 @@ impl Attr {
 		None
 	}
 }
+
+pub enum NameCase {
+	Upper,
+	Lower,
+}
 /**
  * Tag
  * is_end: if the tag end with '>'
@@ -398,9 +403,12 @@ pub struct TagMeta {
 }
 
 impl TagMeta {
-	pub fn get_name(&self, lowercase: bool) -> String {
-		if lowercase {
-			self.name.to_ascii_lowercase()
+	pub fn get_name(&self, case: Option<NameCase>) -> String {
+		if let Some(case) = case {
+			match case {
+				NameCase::Upper => self.name.to_ascii_uppercase(),
+				NameCase::Lower => self.name.to_ascii_lowercase(),
+			}
 		} else {
 			self.name.clone()
 		}
@@ -590,7 +598,12 @@ impl Node {
 					.as_ref()
 					.expect("tag's meta data must have.")
 					.borrow();
-				let tag_name = meta.get_name(options.lowercase_tagname);
+				let name_case = if options.lowercase_tagname {
+					Some(NameCase::Lower)
+				} else {
+					None
+				};
+				let tag_name = meta.get_name(name_case);
 				// check if is in pre, only check if not in pre
 				status.is_in_pre = is_in_pre || {
 					if options.lowercase_tagname {
@@ -768,7 +781,7 @@ impl Node {
 							} else {
 								// check if is html tag
 								if let Some(meta) = &child_node.meta {
-									if meta.borrow().get_name(true) == "html" {
+									if meta.borrow().get_name(Some(NameCase::Lower)) == "html" {
 										find_html = true;
 										is_document = true;
 									} else {
@@ -1233,7 +1246,7 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 					.as_ref()
 					.expect("Tag node must have a meta of tag name")
 					.borrow()
-					.get_name(false);
+					.get_name(None);
 				if last_tag_name.to_lowercase() == fix_end_tag_name {
 					if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
 						return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
@@ -1793,7 +1806,7 @@ impl Doc {
 				// set it's meta as auto fix
 				meta.borrow_mut().auto_fix = true;
 				// make end tag
-				let tag_name = meta.borrow().get_name(false);
+				let tag_name = meta.borrow().get_name(None);
 				let mut end = Node::new(NodeType::TagEnd, self.position);
 				end.content = Some(tag_name.chars().collect());
 				end.parent = Some(Rc::downgrade(&tag_node));
