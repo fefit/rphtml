@@ -1057,13 +1057,13 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 										if tag_in_key {
 											if !is_char_available_in_key(&c) {
 												return doc.error(
-													ErrorKind::CommonError("wrong key character".into()),
+													ErrorKind::CommonError(format!("wrong key character:{}", c)),
 													context,
 												);
 											}
 										} else if !is_char_available_in_value(&c) {
 											return doc.error(
-												ErrorKind::CommonError("wrong value character".into()),
+												ErrorKind::CommonError(format!("wrong value character:{}", c)),
 												context,
 											);
 										}
