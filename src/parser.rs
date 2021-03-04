@@ -393,7 +393,6 @@ pub enum NameCase {
 pub struct TagMeta {
 	prev_is_key: bool,
 	is_in_kv: bool,
-	is_in_translate: bool,
 	tag_in: TagCodeIn,
 	is_end: bool,
 	pub self_closed: bool,
@@ -1057,13 +1056,13 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 										if tag_in_key {
 											if !is_char_available_in_key(&c) {
 												return doc.error(
-													ErrorKind::CommonError(format!("wrong key character:{}", c)),
+													ErrorKind::CommonError(format!("Wrong attribute name character:{}", c)),
 													context,
 												);
 											}
 										} else if !is_char_available_in_value(&c) {
 											return doc.error(
-												ErrorKind::CommonError(format!("wrong value character:{}", c)),
+												ErrorKind::CommonError(format!("Wrong attribute value character:{}", c)),
 												context,
 											);
 										}
@@ -1090,12 +1089,8 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 						}
 					}
 					DoubleQuotedValue | SingleQuotedValue => {
-						let is_in_translate = meta.is_in_translate;
-						if is_in_translate {
-							meta.is_in_translate = false;
-							doc.prev_chars.push(c);
-						} else if (meta.tag_in == DoubleQuotedValue && c == '"')
-							|| (meta.tag_in == SingleQuotedValue && c == '\'')
+						if (c == '"' && meta.tag_in == DoubleQuotedValue)
+							|| (c == '\'' && meta.tag_in == SingleQuotedValue)
 						{
 							meta.tag_in = Wait;
 							let cur_attr = meta.attrs.last_mut().expect("current attr must have");
@@ -1105,14 +1100,10 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 							id_name = cur_attr.check_if_id();
 							doc.prev_chars.clear();
 						} else {
-							let is_tran_slash = c == '\\';
-							if is_tran_slash {
-								meta.is_in_translate = true;
-							}
 							let cur_attr = meta.attrs.last_mut().expect("current attr must have");
 							if !cur_attr.need_quote {
 								// need quote characters
-								if is_tran_slash || Attr::need_quoted_char(&c) {
+								if Attr::need_quoted_char(&c) {
 									cur_attr.need_quote = true;
 								}
 							}
@@ -1156,7 +1147,6 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 						prev_is_key: false,
 						is_end: false,
 						is_in_kv: false,
-						is_in_translate: false,
 					};
 					current_node.meta = Some(RefCell::new(meta));
 				} else {

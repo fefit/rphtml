@@ -122,52 +122,56 @@ fn test_style_tag() -> HResult {
 #[test]
 fn test_attrs() -> HResult {
 	// a complex attribute
-	let code = r##"
-    <img src=http://site.com/abc.jpg alt =abc defer data-width= 60 data-name = "abc" data-size='60*60' data-msg="quote is '\"',ok" class="js-img img" />
-  "##;
+	let code = r##"<img src=http://site.com/abc.jpg alt =abc defer data-width= 60 data-name = "abc" data-size='60*60' data-msg="quote must escape.&quot;" class="js-img img" xpath="A\B\C\" />"##;
 	let doc = parse(code)?;
-	doc.borrow().root.borrow().childs.as_ref().map(|childs| {
-		let _ = childs.iter().map(|c| {
-			if let Some(meta) = &c.borrow().meta {
-				let attrs = &meta.borrow().attrs;
-				// attribute 1
-				assert_eq!(get_attr_content(&attrs[0].key), Some("src"));
-				assert_eq!(
-					get_attr_content(&attrs[0].value),
-					Some("http://site.com/abc.jpg")
-				);
-				// attribute 2
-				assert_eq!(get_attr_content(&attrs[1].key), Some("alt"));
-				assert_eq!(get_attr_content(&attrs[1].value), Some("abc"));
-				// attribute 3
-				assert_eq!(get_attr_content(&attrs[2].key), Some("defer"));
-				assert!(&attrs[2].value.is_none());
-				// attribute 4
-				assert_eq!(get_attr_content(&attrs[3].key), Some("data-width"));
-				assert_eq!(get_attr_content(&attrs[3].value), Some("60"));
-				// attribute 5
-				assert_eq!(get_attr_content(&attrs[4].key), Some("data-name"));
-				assert_eq!(get_attr_content(&attrs[4].value), Some("abc"));
-				assert_eq!(attrs[4].quote, Some('"'));
-				assert_eq!(attrs[4].need_quote, false);
-				// attribute 6
-				assert_eq!(get_attr_content(&attrs[5].key), Some("data-size"));
-				assert_eq!(get_attr_content(&attrs[5].value), Some("60*60"));
-				assert_eq!(attrs[5].quote, Some('\''));
-				// attribute 7
-				assert_eq!(get_attr_content(&attrs[6].key), Some("data-msg"));
-				assert_eq!(get_attr_content(&attrs[6].value), Some("quote is '\"',ok"));
-				// attribute 8
-				assert_eq!(get_attr_content(&attrs[7].key), Some("class"));
-				assert_eq!(get_attr_content(&attrs[7].value), Some("js-img img"));
-				assert_eq!(attrs[4].need_quote, true);
-			}
-		});
-		childs
-	});
+	let root = doc.get_root_node();
+	let root = root.borrow();
+	let childs = root.childs.as_ref().unwrap();
+	let first_child = &childs[0];
+	let first_child = &first_child.borrow();
+	let attrs = &first_child.meta.as_ref().unwrap().borrow().attrs;
+	// attribute 1
+	assert_eq!(get_attr_content(&attrs[0].key), Some("src"));
+	assert_eq!(
+		get_attr_content(&attrs[0].value),
+		Some("http://site.com/abc.jpg")
+	);
+	// attribute 2
+	assert_eq!(get_attr_content(&attrs[1].key), Some("alt"));
+	assert_eq!(get_attr_content(&attrs[1].value), Some("abc"));
+	// attribute 3
+	assert_eq!(get_attr_content(&attrs[2].key), Some("defer"));
+	assert!(&attrs[2].value.is_none());
+	// attribute 4
+	assert_eq!(get_attr_content(&attrs[3].key), Some("data-width"));
+	assert_eq!(get_attr_content(&attrs[3].value), Some("60"));
+	// attribute 5
+	assert_eq!(get_attr_content(&attrs[4].key), Some("data-name"));
+	assert_eq!(get_attr_content(&attrs[4].value), Some("abc"));
+	assert_eq!(attrs[4].quote, Some('"'));
+	assert_eq!(attrs[4].need_quote, false);
+	// attribute 6
+	assert_eq!(get_attr_content(&attrs[5].key), Some("data-size"));
+	assert_eq!(get_attr_content(&attrs[5].value), Some("60*60"));
+	assert_eq!(attrs[5].quote, Some('\''));
+	// attribute 7
+	assert_eq!(get_attr_content(&attrs[6].key), Some("data-msg"));
+	assert_eq!(
+		get_attr_content(&attrs[6].value),
+		Some("quote must escape.&quot;")
+	);
+	// attribute 8
+	assert_eq!(get_attr_content(&attrs[7].key), Some("class"));
+	assert_eq!(get_attr_content(&attrs[7].value), Some("js-img img"));
+	assert_eq!(attrs[7].need_quote, true);
+	// attribute 9
+	assert_eq!(get_attr_content(&attrs[8].key), Some("xpath"));
+	assert_eq!(get_attr_content(&attrs[8].value), Some("A\\B\\C\\"));
+	assert_eq!(attrs[8].need_quote, false);
 	// wrong value
 	assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
 	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
+	assert_eq!(parse(r#"<div a="1\""></div>"#).is_err(), true);
 	Ok(())
 }
 
