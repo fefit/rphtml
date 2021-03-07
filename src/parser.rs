@@ -399,6 +399,7 @@ pub struct TagMeta {
 	pub auto_fix: bool,
 	pub name: String,
 	pub attrs: Vec<Attr>,
+	pub lc_name_map: HashMap<String, usize>,
 }
 
 impl TagMeta {
@@ -1073,12 +1074,18 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 						}
 						if is_end_key_or_value {
 							// if end of the key or value
-							let cur_attr = meta.attrs.last_mut().expect("the attr must have");
+							let cur_attr_index = meta.attrs.len() - 1;
 							let value = doc.chars_to_string();
 							if tag_in_key {
+								// insert lowercase attribute name to maps
+								let attr_key = value.to_ascii_lowercase();
+								meta.lc_name_map.entry(attr_key).or_insert(cur_attr_index);
+								// set cur attr key
+								let cur_attr = &mut meta.attrs[cur_attr_index];
 								let attr_data = doc.make_attr_data(value);
 								cur_attr.key = Some(attr_data);
 							} else {
+								let cur_attr = &mut meta.attrs[cur_attr_index];
 								let attr_data = doc.make_attr_data(value);
 								cur_attr.value = Some(attr_data);
 								// check if id tag
@@ -1141,6 +1148,7 @@ fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
 					let meta = TagMeta {
 						name: cur_tag_name,
 						attrs: Vec::with_capacity(5),
+						lc_name_map: HashMap::with_capacity(5),
 						auto_fix: false,
 						self_closed: false,
 						tag_in: TagCodeIn::Wait,
