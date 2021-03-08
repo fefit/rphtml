@@ -12,3 +12,7 @@ Cargo.lock
 
 # ignore node_modules
 node_modules/
+
+# flamegraph
+flamegraph.svg
+

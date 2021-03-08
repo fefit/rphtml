@@ -1317,71 +1317,67 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
  */
 fn parse_special_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
-	let end_tag = doc
-		.detect
-		.as_ref()
-		.expect("detect chars must set before set_code_in.");
-	let total_len = end_tag.len();
-	let mut chars_len = doc.prev_chars.len();
-	let mut is_matched = false;
 	// parse html script tag and style tag
 	match c {
 		TAG_BEGIN_CHAR => {
 			doc.mem_position = doc.position;
 		}
-		TAG_END_CHAR
-			if (chars_len == total_len && !doc.prev_char.is_ascii_whitespace())
-				|| chars_len > total_len =>
-		{
-			let mut matched_num = 0;
-			loop {
-				let prev_char = doc.prev_chars[chars_len - 1];
-				// ignore end whitespace
-				if prev_char.is_ascii_whitespace() {
-					if matched_num != 0 {
+		TAG_END_CHAR => {
+			let end_tag = doc
+				.detect
+				.as_ref()
+				.expect("detect chars must set before set_code_in.");
+			let total_len = end_tag.len();
+			let mut chars_len = doc.prev_chars.len();
+			if (chars_len == total_len && !doc.prev_char.is_ascii_whitespace()) || chars_len > total_len {
+				let mut matched_num = 0;
+				loop {
+					let prev_char = doc.prev_chars[chars_len - 1];
+					// ignore end whitespace
+					if prev_char.is_ascii_whitespace() {
+						if matched_num != 0 {
+							break;
+						}
+					} else {
+						let target_char = end_tag[total_len - matched_num - 1];
+						if (doc.parse_options.case_sensitive_tagname && prev_char != target_char)
+							|| prev_char.to_ascii_lowercase() != target_char.to_ascii_lowercase()
+						{
+							break;
+						}
+						matched_num += 1;
+					}
+					chars_len -= 1;
+					if chars_len == 0 || matched_num == total_len {
 						break;
 					}
-				} else {
-					let target_char = end_tag[total_len - matched_num - 1];
-					if (doc.parse_options.case_sensitive_tagname && prev_char != target_char)
-						|| prev_char.to_ascii_lowercase() != target_char.to_ascii_lowercase()
-					{
-						break;
-					}
-					matched_num += 1;
 				}
-				chars_len -= 1;
-				if chars_len == 0 || matched_num == total_len {
-					break;
+				if matched_num == total_len {
+					// set code in unkown
+					doc.set_code_in(Unkown);
+					// find the matched
+					let end_tag_name = doc.prev_chars.split_off(chars_len).split_off(2);
+					// add an end tag
+					let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
+					end.content = Some(end_tag_name);
+					end.parent = Some(Rc::downgrade(&doc.current_node));
+					// set tag node's content, end_tag
+					let node = Rc::new(RefCell::new(end));
+					// here split off is quickly than clean_chars_return
+					let content = doc.prev_chars.split_off(0);
+					let mut current_node = doc.current_node.borrow_mut();
+					current_node.end_tag = Some(Rc::clone(&node));
+					current_node.content = Some(content);
+					// remove current tag
+					doc.chain_nodes.pop();
+					doc.detect = None;
+					return Ok(());
 				}
-			}
-			if matched_num == total_len {
-				is_matched = true;
-				// set code in unkown
-				doc.set_code_in(Unkown);
-				// find the matched
-				let end_tag_name = doc.prev_chars.split_off(chars_len).split_off(2);
-				// add an end tag
-				let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
-				end.content = Some(end_tag_name);
-				end.parent = Some(Rc::downgrade(&doc.current_node));
-				// set tag node's content, end_tag
-				let node = Rc::new(RefCell::new(end));
-				// here split off is quickly than clean_chars_return
-				let content = doc.prev_chars.split_off(0);
-				let mut current_node = doc.current_node.borrow_mut();
-				current_node.end_tag = Some(Rc::clone(&node));
-				current_node.content = Some(content);
-				// remove current tag
-				doc.chain_nodes.pop();
-				doc.detect = None;
 			}
 		}
 		_ => {}
 	}
-	if !is_matched {
-		doc.prev_chars.push(c);
-	}
+	doc.prev_chars.push(c);
 	Ok(())
 }
 
@@ -1572,6 +1568,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
  * Doc
  * the html syntax: https://www.w3.org/TR/2011/WD-html-markup-20110113/syntax.html
 */
+
 pub struct Doc {
 	code_in: CodeTypeIn,
 	position: CodeAt,
