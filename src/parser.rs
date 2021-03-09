@@ -973,7 +973,6 @@ fn parse_doctype_name(doc: &mut Doc, c: char, context: &str) -> HResult {
 
 // parse tag name
 fn parse_tag_name(doc: &mut Doc, c: char, _: &str) -> HResult {
-	println!("parse_tag_name:{}", c);
 	// tag name will setted in this process
 	// 1. <a>
 	// 2. <a/>
@@ -986,9 +985,11 @@ fn parse_tag_name(doc: &mut Doc, c: char, _: &str) -> HResult {
 			if is_void {
 				// tag is end
 				doc.chain_nodes.pop();
+				doc.set_code_in(Unkown);
+			} else {
+				// check the tag type
+				doc.check_tag_type_do();
 			}
-			// parse in unkown
-			doc.set_code_in(Unkown);
 		}
 		END_SLASH_CHAR => {
 			// maybe self closing tag
@@ -1011,7 +1012,6 @@ fn parse_tag_name(doc: &mut Doc, c: char, _: &str) -> HResult {
 
 // parse tag self closing
 fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
-	println!("parse_tag_self_closing:{}", c);
 	// The self closing tag will parsed in this proces
 	// 1. /> ///>
 	// 2. /a="33"  //a="33"
@@ -1066,7 +1066,6 @@ fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
 	// 5. double quote single quote value attribute
 	// 6. tag end
 	// 7. self closing
-	println!("parse_tag_wait:{}", c);
 	match c {
 		DOUBLE_QUOTE_CHAR | SINGLE_QUOTE_CHAR => {
 			// only attribute value without attribute key
@@ -1079,6 +1078,7 @@ fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
 					doc.add_tag_attr_value(Some(c));
 				} else {
 					// take quote value as attribute key too
+					doc.add_tag_attr_key();
 					doc.prev_chars.push(c);
 					doc.set_tag_code_in(TagCodeIn::Key);
 					return Ok(());
@@ -1147,7 +1147,7 @@ fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
 
 // parse tag attribute key
 fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
-	println!("parse_tag_attr_key:{}", c);
+	// attr key will parsed in this process
 	match c {
 		EQUAL_CHAR => {
 			// attribute end
@@ -1188,7 +1188,6 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 
 // parse tag attribute double quote value
 fn parse_tag_attr_value(doc: &mut Doc, c: char, _: &str) -> HResult {
-	println!("parse_tag_attr_value:{}", c);
 	let quote = doc.mark_char;
 	if c == quote || (quote == EMPTY_CHAR && c.is_ascii_whitespace()) {
 		// reset the detect char
@@ -1626,36 +1625,58 @@ fn parse_special_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
 				.detect
 				.as_ref()
 				.expect("detect chars must set before set_code_in.");
-			let total_len = end_tag.len();
-			let mut chars_len = doc.prev_chars.len();
-			if chars_len >= total_len {
-				let mut matched_num = 0;
-				loop {
-					let prev_char = doc.prev_chars[chars_len - 1];
-					// ignore end whitespace
-					if prev_char.is_ascii_whitespace() {
-						if matched_num != 0 {
-							break;
-						}
-					} else {
-						let target_char = end_tag[total_len - matched_num - 1];
-						if (doc.parse_options.case_sensitive_tagname && prev_char != target_char)
-							|| prev_char.to_ascii_lowercase() != target_char.to_ascii_lowercase()
-						{
-							break;
-						}
-						matched_num += 1;
-					}
-					chars_len -= 1;
-					if chars_len == 0 || matched_num == total_len {
+			let mut detect_len = end_tag.len();
+			let prev_chars = &doc.prev_chars;
+			let mut prev_len = doc.prev_chars.len();
+			if prev_len >= detect_len {
+				let case_sensitive = doc.parse_options.case_sensitive_tagname;
+				// remove suffix whitespaces
+				while prev_len > 0 {
+					let cur_index = prev_len - 1;
+					let prev_char = prev_chars[cur_index];
+					if !prev_char.is_ascii_whitespace() {
 						break;
+					} else {
+						prev_len = cur_index;
 					}
 				}
-				if matched_num == total_len {
+				// check if need detect again
+				if prev_len >= detect_len {
+					while detect_len > 0 {
+						let detect_index = detect_len - 1;
+						let detect_char = end_tag[detect_index];
+						let prev_index = prev_len - 1;
+						let prev_char = prev_chars[prev_index];
+						let is_matched = if detect_char == prev_char {
+							true
+						} else {
+							// check if case sensitive
+							if case_sensitive {
+								false
+							} else {
+								match detect_char {
+									'A'..='Z' => detect_char.to_ascii_lowercase() == prev_char,
+									'a'..='z' => detect_char.to_ascii_uppercase() == prev_char,
+									_ => false,
+								}
+							}
+						};
+						if is_matched {
+							// move forward detect
+							detect_len = detect_index;
+							// move forward prev chars
+							prev_len = prev_index;
+						} else {
+							break;
+						}
+					}
+				}
+				// when detect_len equal 0, means all detect characteres are matched
+				if detect_len == 0 {
 					// set code in unkown
 					doc.set_code_in(Unkown);
 					// find the matched
-					let end_tag_name = doc.prev_chars.split_off(chars_len).split_off(2);
+					let end_tag_name = doc.prev_chars.split_off(prev_len).split_off(2);
 					// add an end tag
 					let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
 					end.content = Some(end_tag_name);
@@ -1850,7 +1871,6 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				}
 			}
 			_ => {
-				println!("执行错误到这了===>");
 				return create_parse_error(
 					ErrorKind::WrongTag(doc.chars_to_string()),
 					doc.mem_position,

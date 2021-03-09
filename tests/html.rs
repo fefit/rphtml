@@ -26,9 +26,12 @@ fn test_doctype() -> HResult {
 	// wrong doctype name
 	let code = r##"<!DOCTYPES html>"##;
 	assert!(parse(code).is_err());
-	// wrong doctype end slash
-	let code = r##"<!DOCTYPE html/>"##;
+	// html doctype, with no attribute
+	let code = r##"<!DOCTYPE>"##;
 	assert!(parse(code).is_err());
+	// doctype end slash, just ignore
+	let code = r##"<!DOCTYPE html/>"##;
+	assert!(parse(code).is_ok());
 	Ok(())
 }
 
@@ -166,9 +169,9 @@ fn test_attrs() -> HResult {
 	assert_eq!(get_attr_content(&attrs[8].key), Some("xpath"));
 	assert_eq!(get_attr_content(&attrs[8].value), Some("A\\B\\C\\"));
 	// wrong value
-	assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
-	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
-	assert_eq!(parse(r#"<div a="1\""></div>"#).is_err(), true);
+	assert!(parse(r#"<div id"1"></div>"#).is_ok());
+	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_ok(), true);
+	assert_eq!(parse(r#"<div a="1\""></div>"#).is_ok(), true);
 	Ok(())
 }
 
@@ -278,13 +281,7 @@ fn test_tag_name() -> HResult {
 	assert_eq!(render(&doc), code);
 	// case3
 	let code = r#"<abc<<></abc<<>"#;
-	let doc = Doc::parse(
-		code,
-		ParseOptions {
-			auto_fix_unexpected_endtag: true,
-			..Default::default()
-		},
-	)?;
+	let doc = Doc::parse(code, Default::default())?;
 	assert_eq!(render(&doc), code);
 	Ok(())
 }
