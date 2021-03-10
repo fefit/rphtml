@@ -4957,9 +4957,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 <!--b296c95a3D9-->
 
   "##;
-	// let code = format!("<script>{}</script>", code);
 	let start_time = SystemTime::now();
-	let total = 500;
+	let total = 200;
 	for _ in 0..total {
 		let doc = Doc::parse(
 			code,

@@ -26,9 +26,12 @@ fn test_doctype() -> HResult {
 	// wrong doctype name
 	let code = r##"<!DOCTYPES html>"##;
 	assert!(parse(code).is_err());
-	// wrong doctype end slash
-	let code = r##"<!DOCTYPE html/>"##;
+	// html doctype, with no attribute
+	let code = r##"<!DOCTYPE>"##;
 	assert!(parse(code).is_err());
+	// doctype end slash, just ignore
+	let code = r##"<!DOCTYPE html/>"##;
+	assert!(parse(code).is_ok());
 	Ok(())
 }
 
@@ -149,7 +152,6 @@ fn test_attrs() -> HResult {
 	assert_eq!(get_attr_content(&attrs[4].key), Some("data-name"));
 	assert_eq!(get_attr_content(&attrs[4].value), Some("abc"));
 	assert_eq!(attrs[4].quote, Some('"'));
-	assert_eq!(attrs[4].need_quote, false);
 	// attribute 6
 	assert_eq!(get_attr_content(&attrs[5].key), Some("data-size"));
 	assert_eq!(get_attr_content(&attrs[5].value), Some("60*60"));
@@ -163,15 +165,13 @@ fn test_attrs() -> HResult {
 	// attribute 8
 	assert_eq!(get_attr_content(&attrs[7].key), Some("class"));
 	assert_eq!(get_attr_content(&attrs[7].value), Some("js-img img"));
-	assert_eq!(attrs[7].need_quote, true);
 	// attribute 9
 	assert_eq!(get_attr_content(&attrs[8].key), Some("xpath"));
 	assert_eq!(get_attr_content(&attrs[8].value), Some("A\\B\\C\\"));
-	assert_eq!(attrs[8].need_quote, false);
 	// wrong value
-	assert_eq!(parse(r#"<div id"1"></div>"#).is_err(), true);
-	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_err(), true);
-	assert_eq!(parse(r#"<div a="1\""></div>"#).is_err(), true);
+	assert!(parse(r#"<div id"1"></div>"#).is_ok());
+	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_ok(), true);
+	assert_eq!(parse(r#"<div a="1\""></div>"#).is_ok(), true);
 	Ok(())
 }
 
@@ -271,11 +271,17 @@ fn test_mathml_tag() -> HResult {
 
 #[test]
 fn test_tag_name() -> HResult {
+	// case1
 	let code = r#"<Form><Form.Item></Form.Item></Form>"#;
 	let doc = parse(code)?;
 	assert_eq!(render(&doc), code);
+	// case2
 	let code = r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><script xlink:href="cool-script.js" type="text/ecmascript" /></svg>"#;
 	let doc = parse(code)?;
+	assert_eq!(render(&doc), code);
+	// case3
+	let code = r#"<abc<<></abc<<>"#;
+	let doc = Doc::parse(code, Default::default())?;
 	assert_eq!(render(&doc), code);
 	Ok(())
 }
@@ -428,6 +434,7 @@ fn test_auto_fix_unexpected_endtag() -> HResult {
 			content,
 			ParseOptions {
 				auto_fix_unexpected_endtag: true,
+				auto_fix_unclosed_tag: true,
 				..Default::default()
 			},
 		)
@@ -457,12 +464,6 @@ fn test_auto_fix_unexpected_endtag() -> HResult {
 		"<b>text</b>"
 	);
 	Ok(())
-}
-#[test]
-fn test_attr_nospace_splitor() {
-	let code = r##"<a readonly"title"></a>"##;
-	let result = parse(code);
-	assert!(result.is_err());
 }
 
 #[test]
