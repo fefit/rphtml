@@ -50,10 +50,18 @@ pub fn is_non_character(ch: &char) -> bool {
  * https://html.spec.whatwg.org/multipage/syntax.html#attributes-2
 */
 pub fn is_char_available_in_key(ch: &char) -> bool {
-	if ch.is_ascii_whitespace() || ch.is_ascii_control() || is_non_character(ch) {
+	if ch.is_ascii_alphanumeric() || ['_', '-', '.', ':'].contains(ch) {
+		return true;
+	}
+	if ch.is_ascii_whitespace()
+		|| ch.is_ascii_control()
+		|| is_non_character(ch)
+		|| ch.is_ascii_punctuation()
+		|| *ch == '\u{0000}'
+	{
 		return false;
 	}
-	!matches!(ch, '\u{0000}' | '"' | '\'' | '>' | '/' | '=')
+	true
 }
 
 pub fn is_char_available_in_value(ch: &char) -> bool {
