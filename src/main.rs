@@ -4958,15 +4958,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   "##;
 	let start_time = SystemTime::now();
-	let total = 1;
+	let total = 200;
 	for _ in 0..total {
 		let doc = Doc::parse(
 			code,
 			ParseOptions {
-				// auto_fix_unexpected_endtag: true,
-				// allow_self_closing: true,
-				// auto_fix_unclosed_tag: true,
-				// auto_fix_unescaped_lt: true,
+				auto_fix_unexpected_endtag: true,
+				allow_self_closing: true,
+				auto_fix_unclosed_tag: true,
+				auto_fix_unescaped_lt: true,
 				..Default::default()
 			},
 		)?;
@@ -4974,8 +4974,5 @@ fn main() -> Result<(), Box<dyn Error>> {
 	}
 	let used_time = SystemTime::now().duration_since(start_time)?;
 	println!("Total used: {:?}, Per: {:?}", used_time, used_time / total);
-	// let html = r#"<abc<<></abc<<>"#;
-	// let doc = Doc::parse(html, Default::default())?;
-	// println!("{:?}", doc.get_root_node());
 	Ok(())
 }

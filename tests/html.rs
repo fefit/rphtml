@@ -434,6 +434,7 @@ fn test_auto_fix_unexpected_endtag() -> HResult {
 			content,
 			ParseOptions {
 				auto_fix_unexpected_endtag: true,
+				auto_fix_unclosed_tag: true,
 				..Default::default()
 			},
 		)
@@ -463,12 +464,6 @@ fn test_auto_fix_unexpected_endtag() -> HResult {
 		"<b>text</b>"
 	);
 	Ok(())
-}
-#[test]
-fn test_attr_nospace_splitor() {
-	let code = r##"<a readonly"title"></a>"##;
-	let result = parse(code);
-	assert!(result.is_err());
 }
 
 #[test]

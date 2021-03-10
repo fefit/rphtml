@@ -1,5 +1,4 @@
 use crate::config::{ParseOptions, RenderOptions};
-use crate::util::{is_char_available_in_key, is_char_available_in_value};
 
 use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
 use lazy_static::lazy_static;
@@ -27,6 +26,9 @@ const EQUAL_CHAR: char = '=';
 const DOUBLE_QUOTE_CHAR: char = '"';
 const SINGLE_QUOTE_CHAR: char = '\'';
 const EOF_CHAR: char = '\0';
+const DASH_CHAR: char = '-';
+const LEFT_BRACKET_CHAR: char = '[';
+const RIGHT_BRACKET_CHAR: char = ']';
 const ALLOC_CHAR_CAPACITY: usize = 50;
 const ALLOC_NODES_CAPACITY: usize = 20;
 
@@ -167,9 +169,20 @@ lazy_static! {
 	static ref DETECT_CHAR_MAP: HashMap<DetectChar, Vec<char>> = {
 		use DetectChar::*;
 		let mut map = HashMap::new();
-		map.insert(Comment, vec!['-', '-']);
+		map.insert(Comment, vec![DASH_CHAR, DASH_CHAR]);
 		map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
-		map.insert(XMLCDATA, vec!['[', 'C', 'D', 'A', 'T', 'A', '[']);
+		map.insert(
+			XMLCDATA,
+			vec![
+				LEFT_BRACKET_CHAR,
+				'C',
+				'D',
+				'A',
+				'T',
+				'A',
+				LEFT_BRACKET_CHAR,
+			],
+		);
 		map
 	};
 	static ref VOID_ELEMENTS: Vec<&'static str> = vec![
@@ -186,10 +199,10 @@ lazy_static! {
 	static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec![
 		DOUBLE_QUOTE_CHAR,
 		SINGLE_QUOTE_CHAR,
-		'`',
+		TAG_BEGIN_CHAR,
+		TAG_END_CHAR,
 		EQUAL_CHAR,
-		'<',
-		'>'
+		'`',
 	];
 }
 
@@ -229,7 +242,7 @@ pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 			},
 		};
 		return special
-			.is_ok(&code_in, name, ' ', CodeAt::default(), "")
+			.is_ok(&code_in, name, &EMPTY_CHAR, &CodeAt::default(), "")
 			.is_ok();
 	}
 	if is_plain_text_tag(name) {
@@ -475,13 +488,14 @@ impl TagMeta {
 		attr.key = Some(AttrData { content: key });
 	}
 	// set attr value
-	pub fn set_attr_value(&mut self, value: String, quote: Option<char>) {
+	pub fn set_attr_value(&mut self, value: String, quote: Option<char>) -> &Attr {
 		let attr = self
 			.attrs
 			.last_mut()
 			.expect("Attrs must not be empty when call set_attr_key");
 		attr.value = Some(AttrData { content: value });
 		attr.quote = quote;
+		attr
 	}
 }
 
@@ -518,6 +532,9 @@ pub struct Node {
 
 	// the end tag </xx> of the tag node
 	pub end_tag: Option<RefNode>,
+
+	// prev node
+	pub prev: Option<Weak<RefCell<Node>>>,
 
 	// parent node, use weak reference,prevent reference loop
 	pub parent: Option<Weak<RefCell<Node>>>,
@@ -607,7 +624,7 @@ impl Node {
 									continue;
 								}
 								prev_is_space = true;
-								content.push(' ');
+								content.push(EMPTY_CHAR);
 							} else {
 								prev_is_space = false;
 								content.push(c);
@@ -865,8 +882,8 @@ impl SpecialTag {
 		&self,
 		code_in: &CodeTypeIn,
 		tag_name: &str,
-		c: char,
-		position: CodeAt,
+		c: &char,
+		position: &CodeAt,
 		context: &str,
 	) -> HResult {
 		use CodeTypeIn::*;
@@ -888,7 +905,7 @@ impl SpecialTag {
 							"the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
 							tag_name, code_in, position
 						);
-						return create_parse_error(ErrorKind::CommonError(message), position, context);
+						return create_parse_error(ErrorKind::CommonError(message), *position, context);
 					}
 				};
 			}
@@ -903,7 +920,7 @@ pub type HResult = GenResult<()>;
 type NextHandle = fn(&mut Doc, char, &str) -> HResult;
 
 /*
-* no operation, just placeholder for initialize doc
+* No operation, just for initialization
 */
 fn noop(_d: &mut Doc, _c: char, _content: &str) -> HResult {
 	Ok(())
@@ -921,12 +938,30 @@ fn parse_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 			doc.set_code_in(UnkownTag);
 		}
 		_ => {
-			// new text node
-			doc.add_new_node(Rc::new(RefCell::new(Node::new(
-				NodeType::Text,
-				doc.position,
-			))));
-			doc.repeat_whitespace = c.is_ascii_whitespace();
+			if doc.parse_options.auto_fix_unexpected_endtag
+				&& matches!(
+					doc.current_node.borrow().node_type,
+					NodeType::Text | NodeType::SpacesBetweenTag
+				) {
+				// fix the unexpected endtag
+				let mut current_node = doc.current_node.borrow_mut();
+				// remove content to prev chars
+				if let Some(content) = &mut current_node.content {
+					doc.prev_chars.append(content);
+				}
+				if matches!(current_node.node_type, NodeType::Text) {
+					doc.repeat_whitespace = false;
+				} else {
+					doc.repeat_whitespace = c.is_ascii_whitespace();
+				}
+			} else {
+				// new text node
+				doc.add_new_node(Rc::new(RefCell::new(Node::new(
+					NodeType::Text,
+					doc.position,
+				))));
+				doc.repeat_whitespace = c.is_ascii_whitespace();
+			}
 			doc.prev_chars.push(c);
 			doc.set_code_in(TextNode);
 		}
@@ -934,6 +969,9 @@ fn parse_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 	Ok(())
 }
 
+/**
+ * code_in: Text
+*/
 fn parse_text(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	match c {
@@ -960,7 +998,10 @@ fn parse_text(doc: &mut Doc, c: char, _: &str) -> HResult {
 	}
 	Ok(())
 }
-// doctype name
+
+/**
+* code_in: Doctype name
+*/
 fn parse_doctype_name(doc: &mut Doc, c: char, context: &str) -> HResult {
 	if c.is_ascii_whitespace() {
 		doc.set_tag_meta();
@@ -971,6 +1012,9 @@ fn parse_doctype_name(doc: &mut Doc, c: char, context: &str) -> HResult {
 	doc.error(ErrorKind::WrongHtmlDoctype(c), context)
 }
 
+/**
+ * code_in: Tag name
+ */
 // parse tag name
 fn parse_tag_name(doc: &mut Doc, c: char, _: &str) -> HResult {
 	// tag name will setted in this process
@@ -1010,6 +1054,9 @@ fn parse_tag_name(doc: &mut Doc, c: char, _: &str) -> HResult {
 	Ok(())
 }
 
+/**
+ * Tag self closing
+ */
 // parse tag self closing
 fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 	// The self closing tag will parsed in this proces
@@ -1057,7 +1104,7 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 }
 
 /// in tag, wait attribute or end
-fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
+fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 	// All tag wait status will parsed in this process
 	// 1. spaces between attributes TagCodeIn::Wait
 	// 2. (spaces)?= TagCodeIn::KeyEnd
@@ -1187,425 +1234,125 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 }
 
 // parse tag attribute double quote value
-fn parse_tag_attr_value(doc: &mut Doc, c: char, _: &str) -> HResult {
+fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
+	#[inline]
+	fn make_quote(c: char) -> Option<char> {
+		if c == EMPTY_CHAR {
+			None
+		} else {
+			Some(c)
+		}
+	}
+	// logic
 	let quote = doc.mark_char;
 	if c == quote || (quote == EMPTY_CHAR && c.is_ascii_whitespace()) {
 		// reset the detect char
 		doc.mark_char = EOF_CHAR;
-		// set value
-		let quote = if quote != EMPTY_CHAR {
-			Some(quote)
-		} else {
-			None
-		};
-		doc.set_tag_attr_value(quote);
+		doc.set_tag_attr_value(make_quote(quote));
 		doc.set_tag_code_in(TagCodeIn::Wait);
 	} else {
-		// check if character allowed in value
-		if quote != EMPTY_CHAR {
-			// quoted value
-			doc.prev_chars.push(c);
+		// unquoted value
+		// check if avaiable character in value
+		if c == TAG_END_CHAR {
+			// set tag value parse end
+			doc.set_tag_attr_value(make_quote(quote));
+			doc.set_tag_code_in(TagCodeIn::ValueEnd);
+			// delegate to parse wait
+			parse_tag_wait(doc, c, context)?;
 		} else {
-			// unquoted value
-			// check if avaiable character in value
-			if c == TAG_END_CHAR {
-				// set tag value
-				doc.set_tag_attr_value(None);
-				// set tag in unkown
-				doc.set_code_in(CodeTypeIn::Unkown);
-			} else {
-				doc.prev_chars.push(c);
-			}
+			doc.prev_chars.push(c);
 		}
 	}
 	Ok(())
 }
 
 /**
- * code_in: Tag | HTMLDOCTYPE
- */
-// fn parse_tag_or_doctype(doc: &mut Doc, c: char, context: &str) -> HResult {
-// 	use CodeTypeIn::*;
-// 	let mut is_self_closing = false;
-// 	let mut tag_name: String = String::from("");
-// 	// void elements
-// 	let mut is_void_element = false;
-// 	// meet end character '>'
-// 	let mut is_node_end = false;
-// 	// is an id tag
-// 	let mut id_name: Option<String> = None;
-// 	//
-// 	{
-// 		let mut current_node = doc.current_node.borrow_mut();
-// 		match current_node.meta.as_mut() {
-// 			Some(meta) => {
-// 				// meta is initial
-// 				use TagCodeIn::*;
-// 				let mut meta = meta.borrow_mut();
-// 				match meta.tag_in {
-// 					Wait | Key | Value => {
-// 						let tag_in_wait = meta.tag_in == Wait;
-// 						let tag_in_key = meta.tag_in == Key;
-// 						let mut is_end_key_or_value = false;
-// 						// tag in wait, if prev char is END_SLASH_CHAR
-// 						// the current char should be the end of tag, otherwise trigger a parse error warning
-// 						if tag_in_wait && doc.mark_char == END_SLASH_CHAR && c != TAG_END_CHAR {
-// 							// warning
-// 						}
-// 						if c.is_ascii_whitespace() {
-// 							// if tag in wait state, ignore whitespaces, otherwise, is an end of key or value
-// 							if !tag_in_wait {
-// 								is_end_key_or_value = true;
-// 							}
-// 						} else if c == TAG_END_CHAR {
-// 							meta.is_end = true;
-// 							is_void_element = is_void_tag(&meta.name.to_lowercase().as_str());
-// 							// self-closing tags
-// 							if tag_in_wait {
-// 								if doc.mark_char == END_SLASH_CHAR {
-// 									if is_void_element {
-// 										// void element allow self closing
-// 									} else {
-// 										// self closing
-// 										if !doc.parse_options.allow_self_closing {
-// 											// sub element in Svg or MathML allow self-closing
-// 											match doc.check_special() {
-// 												Some(SpecialTag::Svg) | Some(SpecialTag::MathML) => {
-// 													// is in svg or mathml
-// 												}
-// 												_ => {
-// 													return doc
-// 														.error(ErrorKind::WrongSelfClosing(meta.name.clone()), context);
-// 												}
-// 											}
-// 										}
-// 									}
-// 									// set self closing
-// 									is_self_closing = true;
-// 									meta.self_closed = true;
-// 								}
-// 							} else {
-// 								is_end_key_or_value = true;
-// 							}
-// 							// tag end
-// 							is_node_end = true;
-// 							// save tag name
-// 							if doc.code_in == Tag {
-// 								tag_name = meta.name.clone();
-// 							}
-// 						} else {
-// 							match c {
-// 								DOUBLE_QUOTE_CHAR | SINGLE_QUOTE_CHAR if tag_in_wait => {
-// 									// if not in kv, quoted value should have spaces before.
-// 									if !meta.is_in_kv {
-// 										if !doc.mark_char.is_ascii_whitespace() {
-// 											return doc.error(ErrorKind::NoSpaceBetweenAttr(c), context);
-// 										}
-// 										// add new value-only attribute
-// 										meta.attrs.push(Default::default());
-// 									} else {
-// 										// meta is now in value of 'key=value'
-// 										meta.is_in_kv = false;
-// 									}
-// 									// reset previous state
-// 									meta.prev_is_key = false;
-// 									meta.tag_in = if c == DOUBLE_QUOTE_CHAR {
-// 										DoubleQuotedValue
-// 									} else {
-// 										SingleQuotedValue
-// 									};
-// 									doc.mem_position = doc.position;
-// 									doc.prev_chars.clear();
-// 								}
-// 								END_SLASH_CHAR => {
-// 									if doc.code_in != Tag {
-// 										return doc.error(ErrorKind::WrongTag(String::from("/")), context);
-// 									}
-// 									if meta.tag_in == Value {
-// 										// value allow string with slash END_SLASH_CHAR
-// 										doc.prev_chars.push(c);
-// 									} else {
-// 										if !tag_in_wait {
-// 											is_end_key_or_value = true;
-// 										}
-// 										meta.tag_in = Wait;
-// 									}
-// 								}
-// 								EQUAL_CHAR => {
-// 									if meta.prev_is_key {
-// 										meta.is_in_kv = true;
-// 									} else {
-// 										return doc.error(ErrorKind::WrongTag(String::from("=")), context);
-// 									}
-// 									// end the key or value
-// 									meta.tag_in = Wait;
-// 									is_end_key_or_value = true;
-// 								}
-// 								_ => {
-// 									if tag_in_wait {
-// 										doc.prev_chars.clear();
-// 										if meta.is_in_kv {
-// 											meta.tag_in = Value;
-// 											meta.is_in_kv = false;
-// 											meta.prev_is_key = false;
-// 										} else {
-// 											meta.tag_in = Key;
-// 											// move attribute index
-// 											meta.prev_is_key = true;
-// 											meta.attrs.push(Default::default());
-// 										}
-// 										doc.mem_position = doc.position;
-// 									} else {
-// 										// check if key or value is ok
-// 										if tag_in_key {
-// 											if !is_char_available_in_key(&c) {
-// 												return doc.error(
-// 													ErrorKind::CommonError(format!("Wrong attribute name character:{}", c)),
-// 													context,
-// 												);
-// 											}
-// 										} else if !is_char_available_in_value(&c) {
-// 											return doc.error(
-// 												ErrorKind::CommonError(format!("Wrong attribute value character:{}", c)),
-// 												context,
-// 											);
-// 										}
-// 									}
-// 									doc.prev_chars.push(c);
-// 								}
-// 							}
-// 						}
-// 						if is_end_key_or_value {
-// 							// if end of the key or value
-// 							let cur_attr_index = meta.attrs.len() - 1;
-// 							let value = doc.chars_to_string();
-// 							if tag_in_key {
-// 								// insert lowercase attribute name to maps
-// 								let attr_key = value.to_ascii_lowercase();
-// 								meta.lc_name_map.entry(attr_key).or_insert(cur_attr_index);
-// 								// set cur attr key
-// 								let cur_attr = &mut meta.attrs[cur_attr_index];
-// 								let attr_data = doc.make_attr_data(value);
-// 								cur_attr.key = Some(attr_data);
-// 							} else {
-// 								let cur_attr = &mut meta.attrs[cur_attr_index];
-// 								let attr_data = doc.make_attr_data(value);
-// 								cur_attr.value = Some(attr_data);
-// 								// check if id tag
-// 								id_name = cur_attr.check_if_id();
-// 							}
-// 							doc.prev_chars.clear();
-// 							meta.tag_in = Wait;
-// 						}
-// 					}
-// 					DoubleQuotedValue | SingleQuotedValue => {
-// 						if (c == DOUBLE_QUOTE_CHAR && meta.tag_in == DoubleQuotedValue)
-// 							|| (c == SINGLE_QUOTE_CHAR && meta.tag_in == SingleQuotedValue)
-// 						{
-// 							meta.tag_in = Wait;
-// 							let cur_attr = meta.attrs.last_mut().expect("current attr must have");
-// 							cur_attr.quote = Some(c);
-// 							cur_attr.value = Some(doc.make_attr_data(doc.chars_to_string()));
-// 							// check if id tag
-// 							id_name = cur_attr.check_if_id();
-// 							doc.prev_chars.clear();
-// 						} else {
-// 							let cur_attr = meta.attrs.last_mut().expect("current attr must have");
-// 							if !cur_attr.need_quote {
-// 								// need quote characters
-// 								if Attr::need_quoted_char(&c) {
-// 									cur_attr.need_quote = true;
-// 								}
-// 							}
-// 							doc.prev_chars.push(c);
-// 						}
-// 					}
-// 				}
-// 			}
-// 			None => {
-// 				let is_whitespace = c.is_ascii_whitespace();
-// 				if is_whitespace || c == TAG_END_CHAR || c == END_SLASH_CHAR {
-// 					let cur_tag_name: String = doc.chars_to_string();
-// 					if is_whitespace {
-// 						// tag name ended
-// 						if doc.code_in == HTMLDOCTYPE && cur_tag_name.to_ascii_uppercase() != "DOCTYPE" {
-// 							return doc.error(ErrorKind::WrongHtmlDoctype(c), context);
-// 						}
-// 					} else {
-// 						match doc.code_in {
-// 							HTMLDOCTYPE => {
-// 								// html doctype without any attribute
-// 								return doc.error(ErrorKind::WrongHtmlDoctype(c), context);
-// 							}
-// 							Tag => {
-// 								tag_name = cur_tag_name.clone();
-// 								// tag end
-// 								is_node_end = c == TAG_END_CHAR;
-// 								// check if void element
-// 								is_void_element = VOID_ELEMENTS.contains(&cur_tag_name.to_lowercase().as_str())
-// 							}
-// 							_ => unreachable!("just detect code in HTMLDOCTYPE and TAG"),
-// 						}
-// 					}
-// 					/* all characters except '>', whitespaces, END_SLASH_CHAR that have detected above are allowed identities */
-// 					let meta = TagMeta {
-// 						name: cur_tag_name,
-// 						attrs: Vec::with_capacity(5),
-// 						lc_name_map: HashMap::with_capacity(5),
-// 						..Default::default()
-// 					};
-// 					current_node.meta = Some(RefCell::new(meta));
-// 				} else {
-// 					doc.prev_chars.push(c);
-// 				}
-// 			}
-// 		}
-// 	}
-// 	// add id tag to tags
-// 	if let Some(name) = id_name {
-// 		doc
-// 			.id_tags
-// 			.borrow_mut()
-// 			.insert(name, Rc::clone(&doc.current_node));
-// 	}
-// 	if is_node_end {
-// 		doc.set_tag_end_info();
-// 		if is_self_closing {
-// 			// not void element, but allow self-closing or in <svg/math>, pop from chain nodes
-// 			doc.chain_nodes.pop();
-// 			doc.prev_chars.clear();
-// 			doc.set_code_in(Unkown);
-// 		} else if doc.code_in == Tag {
-// 			let is_in_svg = doc
-// 				.check_special()
-// 				.map_or(false, |special| special == SpecialTag::Svg);
-// 			match tag_name.to_lowercase().as_str() {
-// 				name @ "script" | name @ "style" | name @ "title" | name @ "textarea"
-// 					if !is_in_svg || is_script_or_style(name) =>
-// 				{
-// 					// svg tags allow script and style tag, but title and textarea will treat as normal tag
-// 					doc.mem_position = doc.position;
-// 					let code_in = match name {
-// 						"script" => HTMLScript,
-// 						"style" => HTMLStyle,
-// 						_ => EscapeableRawText,
-// 					};
-// 					doc.set_code_in(code_in);
-// 					// set detect chars
-// 					let mut next_chars = vec!['<', END_SLASH_CHAR];
-// 					let tag_chars: Vec<_> = tag_name.chars().collect();
-// 					next_chars.extend(tag_chars);
-// 					doc.detect = Some(next_chars);
-// 				}
-// 				name => {
-// 					if is_void_element {
-// 						// void elements
-// 						doc.chain_nodes.pop();
-// 					} else if doc.in_special.is_none() {
-// 						// not void elements will check if special
-// 						doc.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(name) {
-// 							Some((special, Box::leak(tag_name.into_boxed_str())))
-// 						} else {
-// 							None
-// 						}
-// 					}
-// 					doc.set_code_in(Unkown);
-// 				}
-// 			}
-// 			// reset chars
-// 			doc.prev_chars.clear();
-// 		} else {
-// 			doc.prev_chars.clear();
-// 			doc.set_code_in(Unkown);
-// 		}
-// 	}
-// 	Ok(())
-// }
-
-/**
  * code_in: TagEnd
  */
 fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 	use CodeTypeIn::*;
-	let mut unexpected_type: Option<CodeTypeIn> = None;
 	// the end tag
-	if c == TAG_END_CHAR {
-		let end_tag_name = doc.chars_to_string();
-		let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
-		let mut is_endtag_ok = false;
-		// check if the tag matched
-		if doc.chain_nodes.len() > 1 {
-			if let Some(last_tag) = doc.chain_nodes.last() {
-				let last_tag_name = last_tag
-					.borrow()
-					.meta
-					.as_ref()
-					.expect("Tag node must have a meta of tag name")
-					.borrow()
-					.get_name(None);
-				if last_tag_name.to_lowercase() == fix_end_tag_name {
-					if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
-						return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
+	match c {
+		TAG_END_CHAR => {
+			let end_tag_name = doc.chars_to_string();
+			let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
+			let mut is_endtag_ok = false;
+			// check if the tag matched
+			if doc.chain_nodes.len() > 1 {
+				if let Some(last_tag) = doc.chain_nodes.last() {
+					let last_tag_name = last_tag
+						.borrow()
+						.meta
+						.as_ref()
+						.expect("Tag node must have a meta of tag name")
+						.borrow()
+						.get_name(None);
+					if last_tag_name.to_lowercase() == fix_end_tag_name {
+						if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
+							return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
+						}
+						is_endtag_ok = true;
 					}
-					is_endtag_ok = true;
+				}
+			}
+			// meet the right end tag
+			if is_endtag_ok {
+				// pop from chain nodes
+				let last_tag = doc
+					.chain_nodes
+					.pop()
+					.expect("End tag must have matched tag in chain nodes");
+				// set end tag
+				last_tag.borrow_mut().end_tag = Some(Rc::clone(&doc.current_node));
+				// set space between tag
+				let is_only_text_child = match &last_tag.borrow().childs {
+					Some(childs) => childs.len() == 1 && childs[0].borrow().node_type == NodeType::Text,
+					None => false,
+				};
+				if !is_only_text_child {
+					doc.set_text_spaces_between();
+				}
+				// set node end
+				doc.set_tag_end_info();
+				// set code in
+				doc.set_code_in(Unkown);
+				// end of special tag
+				if doc.in_special.is_some() && doc.in_special.unwrap().1.to_lowercase() == fix_end_tag_name
+				{
+					doc.in_special = None;
+				}
+				// set end tag more info
+				let mut current_node = doc.current_node.borrow_mut();
+				current_node.parent = Some(Rc::downgrade(&last_tag));
+				current_node.content = Some(end_tag_name.chars().collect());
+				// clear chars
+				doc.prev_chars.clear();
+			} else {
+				// no matched start tag
+				if !doc.parse_options.auto_fix_unexpected_endtag {
+					// wrong end tag without start tag
+					return doc.error(ErrorKind::WrongEndTag(end_tag_name), context);
+				} else {
+					// set orig current node
+					let mut orig_current_node: Option<RefNode> = None;
+					if let Some(prev_node) = &doc.current_node.borrow().prev {
+						orig_current_node = Some(prev_node.upgrade().expect(""));
+					}
+					if let Some(orig_current_node) = orig_current_node {
+						doc.current_node = orig_current_node;
+					}
+					// just ignore the end tag
+					doc.prev_chars.clear();
+					doc.set_code_in(Unkown);
+					return Ok(());
 				}
 			}
 		}
-		// meet the right end tag
-		if is_endtag_ok {
-			// pop from chain nodes
-			let last_tag = doc
-				.chain_nodes
-				.pop()
-				.expect("End tag must have matched tag in chain nodes");
-			// set end tag
-			last_tag.borrow_mut().end_tag = Some(Rc::clone(&doc.current_node));
-			// set space between tag
-			let is_only_text_child = match &last_tag.borrow().childs {
-				Some(childs) => childs.len() == 1 && childs[0].borrow().node_type == NodeType::Text,
-				None => false,
-			};
-			if !is_only_text_child {
-				doc.set_text_spaces_between();
-			}
-			// set node end
-			doc.set_tag_end_info();
-			// set code in
-			doc.set_code_in(Unkown);
-			// end of special tag
-			if doc.in_special.is_some() && doc.in_special.unwrap().1.to_lowercase() == fix_end_tag_name {
-				doc.in_special = None;
-			}
-			// set end tag more info
-			let mut current_node = doc.current_node.borrow_mut();
-			current_node.parent = Some(Rc::downgrade(&last_tag));
-			current_node.content = Some(end_tag_name.chars().collect());
-			// clear chars
-			doc.prev_chars.clear();
-			return Ok(());
+		_ => {
+			// just add char to prev chars
+			doc.prev_chars.push(c);
 		}
-		// unexpected end tag
-		unexpected_type = Some(Unkown);
-	} else if c == TAG_BEGIN_CHAR {
-		// match a left angle bracket '<', unexpected end tag
-		unexpected_type = Some(UnkownTag);
 	}
-	// unexpected end tag
-	if let Some(code_in) = unexpected_type {
-		if !doc.parse_options.auto_fix_unexpected_endtag {
-			return create_parse_error(
-				ErrorKind::WrongEndTag(doc.chars_to_string()),
-				doc.current_node.borrow().begin_at,
-				context,
-			);
-		}
-		// auto fix unexpected endtag
-		doc.prev_chars.clear();
-		doc.set_code_in(code_in);
-		return Ok(());
-	}
-	// just add char to prev chars
-	doc.prev_chars.push(c);
 	// return
 	Ok(())
 }
@@ -1616,86 +1363,80 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 fn parse_special_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	// parse html script tag and style tag
-	match c {
-		TAG_BEGIN_CHAR => {
-			doc.mem_position = doc.position;
-		}
-		TAG_END_CHAR => {
-			let end_tag = doc
-				.detect
-				.as_ref()
-				.expect("detect chars must set before set_code_in.");
-			let mut detect_len = end_tag.len();
-			let prev_chars = &doc.prev_chars;
-			let mut prev_len = doc.prev_chars.len();
-			if prev_len >= detect_len {
-				let case_sensitive = doc.parse_options.case_sensitive_tagname;
-				// remove suffix whitespaces
-				while prev_len > 0 {
-					let cur_index = prev_len - 1;
-					let prev_char = prev_chars[cur_index];
-					if !prev_char.is_ascii_whitespace() {
-						break;
-					} else {
-						prev_len = cur_index;
-					}
-				}
-				// check if need detect again
-				if prev_len >= detect_len {
-					while detect_len > 0 {
-						let detect_index = detect_len - 1;
-						let detect_char = end_tag[detect_index];
-						let prev_index = prev_len - 1;
-						let prev_char = prev_chars[prev_index];
-						let is_matched = if detect_char == prev_char {
-							true
-						} else {
-							// check if case sensitive
-							if case_sensitive {
-								false
-							} else {
-								match detect_char {
-									'A'..='Z' => detect_char.to_ascii_lowercase() == prev_char,
-									'a'..='z' => detect_char.to_ascii_uppercase() == prev_char,
-									_ => false,
-								}
-							}
-						};
-						if is_matched {
-							// move forward detect
-							detect_len = detect_index;
-							// move forward prev chars
-							prev_len = prev_index;
-						} else {
-							break;
-						}
-					}
-				}
-				// when detect_len equal 0, means all detect characteres are matched
-				if detect_len == 0 {
-					// set code in unkown
-					doc.set_code_in(Unkown);
-					// find the matched
-					let end_tag_name = doc.prev_chars.split_off(prev_len).split_off(2);
-					// add an end tag
-					let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
-					end.content = Some(end_tag_name);
-					end.parent = Some(Rc::downgrade(&doc.current_node));
-					// set tag node's content, end_tag
-					let node = Rc::new(RefCell::new(end));
-					// here split off is quickly than clean_chars_to_vec
-					let content = doc.prev_chars.split_off(0);
-					let mut current_node = doc.current_node.borrow_mut();
-					current_node.end_tag = Some(Rc::clone(&node));
-					current_node.content = Some(content);
-					// remove current tag
-					doc.chain_nodes.pop();
-					doc.detect = None;
-					return Ok(());
+	if c == TAG_END_CHAR {
+		let end_tag = doc
+			.detect
+			.as_ref()
+			.expect("detect chars must set before set_code_in.");
+		let mut detect_len = end_tag.len();
+		let prev_chars = &doc.prev_chars;
+		let mut prev_len = doc.prev_chars.len();
+		if prev_len >= detect_len {
+			// remove suffix whitespaces
+			while prev_len > 0 {
+				let cur_index = prev_len - 1;
+				let prev_char = prev_chars[cur_index];
+				if !prev_char.is_ascii_whitespace() {
+					break;
+				} else {
+					prev_len = cur_index;
 				}
 			}
+			// check if need detect again
+			if prev_len >= detect_len {
+				let case_sensitive = doc.parse_options.case_sensitive_tagname;
+				while detect_len > 0 {
+					let detect_index = detect_len - 1;
+					let detect_char = end_tag[detect_index];
+					let prev_index = prev_len - 1;
+					let prev_char = prev_chars[prev_index];
+					let is_matched = if detect_char == prev_char {
+						true
+					} else {
+						// check if case sensitive
+						if case_sensitive {
+							false
+						} else {
+							match detect_char {
+								'A'..='Z' => detect_char.to_ascii_lowercase() == prev_char,
+								'a'..='z' => detect_char.to_ascii_uppercase() == prev_char,
+								_ => false,
+							}
+						}
+					};
+					if is_matched {
+						// move forward detect
+						detect_len = detect_index;
+						// move forward prev chars
+						prev_len = prev_index;
+					} else {
+						break;
+					}
+				}
+			}
+			// when detect_len equal 0, means all detect characteres are matched
+			if detect_len == 0 {
+				// set code in unkown
+				doc.set_code_in(Unkown);
+				// find the matched
+				let end_tag_name = doc.prev_chars.split_off(prev_len).split_off(2);
+				// add an end tag
+				let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
+				end.content = Some(end_tag_name);
+				end.parent = Some(Rc::downgrade(&doc.current_node));
+				// set tag node's content, end_tag
+				let node = Rc::new(RefCell::new(end));
+				// here split off is quickly than clean_chars_to_vec
+				let content = doc.prev_chars.split_off(0);
+				let mut current_node = doc.current_node.borrow_mut();
+				current_node.end_tag = Some(Rc::clone(&node));
+				current_node.content = Some(content);
+				// remove current tag
+				doc.chain_nodes.pop();
+				doc.detect = None;
+				return Ok(());
+			}
 		}
-		_ => {}
 	}
 	doc.prev_chars.push(c);
 	Ok(())
@@ -1717,9 +1458,10 @@ fn parse_comment_or_cdata(doc: &mut Doc, c: char, _: &str) -> HResult {
 				let mut content = doc.clean_chars_to_vec();
 				content.truncate(total - 2);
 				doc.current_node.borrow_mut().content = Some(content);
+				// reset mark char
+				doc.mark_char = EOF_CHAR;
 				doc.set_tag_end_info();
 				doc.set_code_in(Unkown);
-				doc.mark_char = EOF_CHAR;
 				return Ok(());
 			}
 		}
@@ -1745,11 +1487,21 @@ fn parse_unkown_tag(doc: &mut Doc, c: char, context: &str) -> HResult {
 			doc.prev_chars.push(c);
 		}
 		END_SLASH_CHAR => {
-			// tag end
-			doc.add_new_node(Rc::new(RefCell::new(Node::new(
-				NodeType::TagEnd,
-				doc.mem_position,
-			))));
+			// if allow auto fix unclosed tag
+			if !doc.parse_options.auto_fix_unclosed_tag {
+				doc.add_new_node(Rc::new(RefCell::new(Node::new(
+					NodeType::TagEnd,
+					doc.mem_position,
+				))));
+			} else {
+				let prev_node = Rc::downgrade(&doc.current_node);
+				// tag end
+				doc.add_new_node(Rc::new(RefCell::new(Node::new(
+					NodeType::TagEnd,
+					doc.mem_position,
+				))));
+				doc.current_node.borrow_mut().prev = Some(prev_node);
+			}
 			doc.set_code_in(TagEnd);
 		}
 		'!' => {
@@ -1787,25 +1539,27 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				if total_len == actual_len - 1 {
 					let begin_at = doc.mem_position;
 					match c {
-						'-' | '[' => {
+						DASH_CHAR | LEFT_BRACKET_CHAR => {
 							let code_in: CodeTypeIn;
 							let node_type: NodeType;
-							if c == '-' {
+							if c == DASH_CHAR {
 								code_in = Comment;
+								doc.mark_char = DASH_CHAR;
 								// new comment node
 								node_type = NodeType::Comment;
 							} else {
 								code_in = XMLCDATA;
+								doc.mark_char = RIGHT_BRACKET_CHAR;
 								// new html doctype node
 								node_type = NodeType::XMLCDATA;
 							}
-							doc.mark_char = c;
 							doc.set_code_in(code_in);
 							// new comment node
 							doc.add_new_node(Rc::new(RefCell::new(Node::new(node_type, begin_at))));
 							doc.prev_chars.clear();
-							ignore_char = true;
 							doc.set_text_spaces_between();
+							// ignore the character
+							ignore_char = true;
 						}
 						'E' | 'e' => {
 							doc.set_code_in(HTMLDOCTYPE);
@@ -1831,13 +1585,13 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 	} else {
 		let detect_type: DetectChar;
 		match c {
-			'-' => {
+			DASH_CHAR => {
 				detect_type = DetectChar::Comment;
 			}
 			'D' | 'd' => {
 				detect_type = DetectChar::DOCTYPE;
 			}
-			'[' => {
+			LEFT_BRACKET_CHAR => {
 				// CDATA
 				let special_tag_name = doc.in_special.map(|(_, name)| name);
 				if let Some(tag_name) = special_tag_name {
@@ -2060,18 +1814,20 @@ impl Doc {
 			}
 		};
 	}
-	// read one char
+
+	// read chars one by one
 	fn next(&mut self, c: &char, content: &str) -> HResult {
 		let handle = self.handle;
 		let _ = handle(self, *c, content)?;
 		self.position.move_one();
 		// check if special, and character is ok
 		if let Some((special, tag_name)) = self.in_special {
-			special.is_ok(&self.code_in, tag_name, *c, self.position, content)?;
+			special.is_ok(&self.code_in, tag_name, &c, &self.position, content)?;
 		}
 		// parse ok
 		Ok(())
 	}
+
 	// add a new node to the queue
 	fn add_new_node(&mut self, node: RefNode) {
 		use NodeType::*;
@@ -2361,7 +2117,17 @@ impl Doc {
 	fn set_tag_attr_value(&mut self, quote: Option<char>) {
 		let value = self.clean_chars_to_string();
 		if let Some(meta) = &self.current_node.borrow_mut().meta {
-			meta.borrow_mut().set_attr_value(value, quote);
+			let mut meta = meta.borrow_mut();
+			// set attribute value
+			let attr = meta.set_attr_value(value, quote);
+			// check the value if is a id value
+			// store the id nodes to cache
+			if let Some(id_name) = attr.check_if_id() {
+				self
+					.id_tags
+					.borrow_mut()
+					.insert(id_name, Rc::clone(&self.current_node));
+			}
 		}
 	}
 	// check tag type
