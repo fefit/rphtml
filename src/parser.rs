@@ -1299,7 +1299,16 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 				// set code in
 				doc.set_code_in(Unkown);
 				// end of special tag
-				if doc.in_special.is_some() && doc.in_special.unwrap().1.to_lowercase() == fix_end_tag_name
+				if doc.in_special.is_some()
+					&& doc
+						.in_special
+						.as_ref()
+						.unwrap()
+						.1
+						.iter()
+						.map(|ch| ch.to_ascii_lowercase())
+						.collect::<String>()
+						== fix_end_tag_name
 				{
 					doc.in_special = None;
 				}
@@ -1577,8 +1586,9 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				// CDATA
 				let special_tag_name = doc.in_special.map(|(_, name)| name);
 				if let Some(tag_name) = special_tag_name {
-					if tag_name
-						== doc
+					if is_equal_chars(
+						&tag_name,
+						&doc
 							.chain_nodes
 							.last()
 							.unwrap()
@@ -1587,10 +1597,9 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 							.as_ref()
 							.expect("Chain nodes must all be tag nodes")
 							.borrow()
-							.name
-							.iter()
-							.collect::<String>()
-					{
+							.name,
+						&None,
+					) {
 						return create_parse_error(
 							ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
 							doc.position,
@@ -1637,7 +1646,7 @@ pub struct Doc {
 	mark_char: char,
 	chain_nodes: Vec<RefNode>,
 	current_node: RefNode,
-	in_special: Option<(SpecialTag, &'static str)>,
+	in_special: Option<(SpecialTag, Vec<char>)>,
 	repeat_whitespace: bool,
 	check_textnode: Option<RefNode>,
 	handle: NextHandle,
@@ -1805,7 +1814,7 @@ impl Doc {
 		self.position.move_one();
 		// check if special, and character is ok
 		if let Some((special, tag_name)) = self.in_special {
-			special.is_ok(&self.code_in, tag_name, &c, &self.position, content)?;
+			special.is_ok(&self.code_in, &tag_name, &c, &self.position, content)?;
 		}
 		// parse ok
 		Ok(())
@@ -2131,37 +2140,38 @@ impl Doc {
 			.as_ref()
 			.expect("")
 			.borrow()
-			.name
-			.clone();
-		match tag_name.to_lowercase().as_str() {
-			name @ "script" | name @ "style" | name @ "title" | name @ "textarea"
-				if !is_in_svg || is_script_or_style(name) =>
-			{
-				// svg tags allow script and style tag, but title and textarea will treat as normal tag
-				self.mem_position = self.position;
-				let code_in = match name {
-					"script" => HTMLScript,
-					"style" => HTMLStyle,
-					_ => EscapeableRawText,
-				};
-				self.set_code_in(code_in);
-				// set detect chars
-				let mut next_chars = vec!['<', END_SLASH_CHAR];
-				let tag_chars: Vec<_> = tag_name.chars().collect();
-				next_chars.extend(tag_chars);
-				self.detect = Some(next_chars);
-			}
-			name => {
-				if self.in_special.is_none() {
-					// not void elements will check if special
-					self.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(name) {
-						Some((special, Box::leak(tag_name.into_boxed_str())))
-					} else {
-						None
-					}
+			.name;
+		let lc_tag_name = tag_name
+			.iter()
+			.map(|ch| ch.to_ascii_lowercase())
+			.collect::<Vec<char>>();
+		if (is_in_svg && is_script_or_style(&lc_tag_name, &None))
+			|| (!is_in_svg && is_plain_text_tag(&lc_tag_name, &None))
+		{
+			// svg tags allow script and style tag, but title and textarea will treat as normal tag
+			self.mem_position = self.position;
+			let code_in = if is_equal_chars(&lc_tag_name, &SCRIPT_TAG_NAME, &None) {
+				HTMLScript
+			} else if is_equal_chars(&lc_tag_name, &STYLE_TAG_NAME, &None) {
+				HTMLStyle
+			} else {
+				EscapeableRawText
+			};
+			self.set_code_in(code_in);
+			// set detect chars
+			let mut next_chars = vec!['<', END_SLASH_CHAR];
+			next_chars.extend_from_slice(&tag_name);
+			self.detect = Some(next_chars);
+		} else {
+			if self.in_special.is_none() {
+				// not void elements will check if special
+				self.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(&lc_tag_name) {
+					Some((special, tag_name.clone()))
+				} else {
+					None
 				}
-				self.set_code_in(Unkown);
 			}
+			self.set_code_in(Unkown);
 		}
 	}
 }
