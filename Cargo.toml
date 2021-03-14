@@ -14,7 +14,8 @@ readme = "README.md"
 [dependencies]
 lazy_static = "1.4.0"
 thiserror = "1.0.21"
-htmlentity = "1.1.1"
+# htmlentity = "1.1.1"
+htmlentity = { path = "../htmlentity" }
 
 [lib]
 name = "rphtml"

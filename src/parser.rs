@@ -1,5 +1,7 @@
 use crate::config::{ParseOptions, RenderOptions};
-
+use crate::error::{ErrorKind, ParseError};
+use crate::position::{CodeAt, CodeRegion};
+use crate::types::{GenResult, HResult};
 use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -14,7 +16,7 @@ use std::{
 	io::BufReader,
 	path::Path,
 };
-use thiserror::Error;
+
 /*
 * constants
 */
@@ -31,146 +33,20 @@ const LEFT_BRACKET_CHAR: char = '[';
 const RIGHT_BRACKET_CHAR: char = ']';
 const ALLOC_CHAR_CAPACITY: usize = 50;
 const ALLOC_NODES_CAPACITY: usize = 20;
-
-pub type RenderEncoderOption = Box<dyn Fn(char) -> Option<EncodeType>>;
-
-#[derive(Debug)]
-pub struct CodeRegion {
-	index: usize,
-	line: usize,
-	col: usize,
-}
-
-impl CodeRegion {
-	fn from_context_index(context: &str, index: usize) -> Self {
-		let mut region = CodeRegion {
-			index,
-			line: 1,
-			col: 0,
-		};
-		let mut prev_char = '\0';
-		for (cur_index, c) in context.chars().into_iter().enumerate() {
-			if cur_index <= index {
-				let mut need_move_col = true;
-				// \r newline in early macos
-				if c == '\r' {
-					region.set_new_line();
-					need_move_col = false;
-				} else if c == '\n' {
-					// \n in windows, combine \r\n as newline
-					if prev_char == '\r' {
-						// do nothing, because did in \r
-					} else {
-						// set to nextline
-						region.set_new_line();
-					}
-					need_move_col = false;
-				}
-				// move one col for the code region
-				if need_move_col {
-					region.move_one();
-				}
-				prev_char = c;
-			}
-		}
-		region
-	}
-
-	// jump to new line
-	pub fn set_new_line(&mut self) {
-		self.line += 1;
-		self.col = 0;
-	}
-	// move to next col
-	pub fn move_one(&mut self) {
-		self.col += 1;
-		self.index += 1;
-	}
-}
-
-impl fmt::Display for CodeRegion {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let output = format!("[line:{},col:{},index:{}]", self.line, self.col, self.index);
-		f.write_str(output.as_str())
-	}
-}
-#[derive(Debug)]
-pub struct ParseError {
-	pub region: CodeRegion,
-	pub kind: ErrorKind,
-}
-
-impl ParseError {
-	pub fn new(kind: ErrorKind, region: CodeRegion) -> Box<Self> {
-		Box::new(ParseError { region, kind })
-	}
-}
-
-// display parse error
-impl fmt::Display for ParseError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let output = format!("{}{}", self.region, self.kind);
-		f.write_str(output.as_str())
-	}
-}
-
-// impl trait Error
-impl Error for ParseError {}
-
-// create parse error
-fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResult {
-	let err = ParseError::new(
-		kind,
-		CodeRegion::from_context_index(context, position.index),
-	);
-	Err(err)
-}
-
-#[derive(Error, Debug)]
-pub enum ErrorKind {
-	#[error("wrong tag <{0}")]
-	WrongTag(String),
-	#[error("wrong end tag </{0}")]
-	WrongEndTag(String),
-	#[error("wrong child tag '<{1}' in tag '{}'")]
-	ChildInSpecialTag(String, char),
-	#[error("unmatched tag '</{0}>'")]
-	UnmatchedClosedTag(String),
-	#[error("unexpected character '{0}'")]
-	UnexpectedCharacter(char),
-	#[error("the tag '{0}' is not closed")]
-	UnclosedTag(String),
-	#[error("the tag's attribute should split by spaces,wrong character '{0}'")]
-	NoSpaceBetweenAttr(char),
-	#[error("unexpected character '{0}' in html doctype decalaration")]
-	WrongHtmlDoctype(char),
-	#[error("unrecognized tag '{0}', do you mean '{1}'")]
-	UnrecognizedTag(String, String),
-	#[error("wrong tag name '{0}'")]
-	WrongTagIdentity(String),
-	#[error("not allowed text '{0}' in root node")]
-	WrongRootTextNode(String),
-	#[error("because the config of 'case-sensitive', the tag '{0}' is not matched correctly.")]
-	WrongCaseSensitive(String),
-	#[error("wrong self-closing tag '{0}',make sure you set the config allow self-closing.")]
-	WrongSelfClosing(String),
-	#[error("{0}")]
-	CommonError(String),
-}
-
-#[derive(PartialEq, Eq, Hash)]
-pub enum DetectChar {
-	Comment,
-	DOCTYPE,
-	XMLCDATA,
-}
+// tagname's characters
+const HTML_TAG_NAME: [char; 4] = ['h', 't', 'm', 'l'];
+const PRE_TAG_NAME: [char; 3] = ['p', 'r', 'e'];
+const SCRIPT_TAG_NAME: [char; 6] = ['s', 'c', 'r', 'i', 'p', 't'];
+const STYLE_TAG_NAME: [char; 5] = ['s', 't', 'y', 'l', 'e'];
+const TITLE_TAG_NAME: [char; 5] = ['t', 'i', 't', 'l', 'e'];
+const TEXTAREA_TAG_NAME: [char; 8] = ['t', 'e', 'x', 't', 'a', 'r', 'e', 'a'];
 
 lazy_static! {
 	static ref DETECT_CHAR_MAP: HashMap<DetectChar, Vec<char>> = {
 		use DetectChar::*;
 		let mut map = HashMap::new();
 		map.insert(Comment, vec![DASH_CHAR, DASH_CHAR]);
-		map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
+		map.insert(DOCTYPE, vec!['d', 'o', 'c', 't', 'y', 'p', 'e']);
 		map.insert(
 			XMLCDATA,
 			vec![
@@ -185,15 +61,27 @@ lazy_static! {
 		);
 		map
 	};
-	static ref VOID_ELEMENTS: Vec<&'static str> = vec![
-		"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
-		"track", "wbr"
+	static ref VOID_ELEMENTS: Vec<Vec<char>> = vec![
+		vec!['i', 'm', 'g'],
+		vec!['i', 'n', 'p', 'u', 't'],
+		vec!['m', 'e', 't', 'a'],
+		vec!['l', 'i', 'n', 'k'],
+		vec!['b', 'r'],
+		vec!['h', 'r'],
+		vec!['c', 'o', 'l'],
+		vec!['b', 'a', 's', 'e'],
+		vec!['p', 'a', 'r', 'a', 'm'],
+		vec!['s', 'o', 'u', 'r', 'c', 'e'],
+		vec!['a', 'r', 'e', 'a'],
+		vec!['e', 'm', 'b', 'e', 'd'],
+		vec!['t', 'r', 'a', 'c', 'k'],
+		vec!['w', 'b', 'r'],
 	];
-	static ref SPECIAL_TAG_MAP: HashMap<&'static str, SpecialTag> = {
+	static ref SPECIAL_TAG_MAP: HashMap<Vec<char>, SpecialTag> = {
 		use SpecialTag::*;
 		let mut map = HashMap::new();
-		map.insert("svg", Svg);
-		map.insert("math", MathML);
+		map.insert(vec!['s', 'v', 'g'], Svg);
+		map.insert(vec!['m', 'a', 't', 't'], MathML);
 		map
 	};
 	static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec![
@@ -206,26 +94,44 @@ lazy_static! {
 	];
 }
 
-fn is_void_tag(name: &str) -> bool {
-	VOID_ELEMENTS.contains(&name)
+// create parse error
+fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResult {
+	let err = ParseError::new(
+		kind,
+		CodeRegion::from_context_index(context, position.index),
+	);
+	Err(err)
 }
 
-fn is_plain_text_tag(name: &str) -> bool {
-	matches!(name, "title" | "textarea")
+fn is_void_tag(name: &[char]) -> bool {
+	let case: Option<NameCase> = None;
+	for cur_name in VOID_ELEMENTS.iter() {
+		if is_equal_chars(&cur_name[..], name, &None) {
+			return true;
+		}
+	}
+	false
 }
 
-fn is_script_or_style(name: &str) -> bool {
-	matches!(name, "style" | "script")
+fn is_plain_text_tag(name: &[char], case: &Option<NameCase>) -> bool {
+	is_equal_chars(name, &TEXTAREA_TAG_NAME[..], case)
+		|| is_equal_chars(name, &TITLE_TAG_NAME[..], case)
 }
 
-pub fn is_content_tag(name: &str) -> bool {
-	is_script_or_style(name) || is_plain_text_tag(name)
+fn is_script_or_style(name: &[char], case: &Option<NameCase>) -> bool {
+	is_equal_chars(name, &STYLE_TAG_NAME[..], case)
+		|| is_equal_chars(name, &SCRIPT_TAG_NAME[..], case)
 }
 
-pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
+pub fn is_content_tag(name: &[char], case: &Option<NameCase>) -> bool {
+	is_script_or_style(name, case) || is_plain_text_tag(name, case)
+}
+
+pub fn allow_insert(name: &[char], node_type: NodeType) -> bool {
 	if is_void_tag(name) {
 		return false;
 	}
+	let case: Option<NameCase> = None;
 	use NodeType::*;
 	if let Some(special) = SPECIAL_TAG_MAP.get(name) {
 		let code_in = match node_type {
@@ -235,20 +141,31 @@ pub fn allow_insert(name: &str, node_type: NodeType) -> bool {
 			Text | SpacesBetweenTag => CodeTypeIn::TextNode,
 			TagEnd => CodeTypeIn::TagEnd,
 			XMLCDATA => CodeTypeIn::XMLCDATA,
-			Tag => match name {
-				"script" => CodeTypeIn::HTMLScript,
-				"style" => CodeTypeIn::HTMLStyle,
-				_ => CodeTypeIn::Tag,
-			},
+			Tag => {
+				if is_equal_chars(name, &SCRIPT_TAG_NAME, &case) {
+					CodeTypeIn::HTMLScript
+				} else if is_equal_chars(name, &STYLE_TAG_NAME, &case) {
+					CodeTypeIn::HTMLStyle
+				} else {
+					CodeTypeIn::Tag
+				}
+			}
 		};
 		return special
 			.is_ok(&code_in, name, &EMPTY_CHAR, &CodeAt::default(), "")
 			.is_ok();
 	}
-	if is_plain_text_tag(name) {
+	if is_plain_text_tag(name, &None) {
 		return node_type == Text || node_type == SpacesBetweenTag;
 	}
 	true
+}
+
+#[derive(PartialEq, Eq, Hash)]
+pub enum DetectChar {
+	Comment,
+	DOCTYPE,
+	XMLCDATA,
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -286,57 +203,102 @@ pub enum CodeTypeIn {
 	TextNode,          // text node
 }
 
-fn get_content(content: &Option<Vec<char>>) -> String {
+fn get_content(content: &Option<Vec<char>>) -> &Vec<char> {
 	match content {
-		Some(content) => content.iter().collect::<String>(),
-		_ => String::from(""),
+		Some(content) => content,
+		_ => &vec![],
 	}
 }
 
-fn get_content_encode(content: &Option<Vec<char>>) -> String {
+fn get_content_encode(content: &Option<Vec<char>>) -> Vec<char> {
 	match content {
-		Some(content) => encode(
-			&content.iter().collect::<String>(),
-			EntitySet::Html,
-			EncodeType::Named,
-		),
-		_ => String::from(""),
+		Some(content) => encode(&content, &EntitySet::Html, &EncodeType::Named),
+		_ => vec![],
 	}
 }
 
-fn get_content_decode(content: &Option<Vec<char>>) -> String {
+fn get_content_decode(content: &Option<Vec<char>>) -> Vec<char> {
 	match content {
-		Some(content) => decode_chars(content).iter().collect::<String>(),
-		_ => String::from(""),
+		Some(content) => decode_chars(content),
+		_ => vec![],
 	}
 }
-/**
- * the doc's position
-*/
-#[derive(Default, Clone, Copy, PartialEq, Debug)]
-pub struct CodeAt {
-	pub index: usize,
+// trim chars left whitespaces
+fn chars_trim_left(target: &[char]) -> &[char] {
+	let mut index: usize = 0;
+	for ch in target {
+		if !ch.is_ascii_whitespace() {
+			break;
+		}
+		index += 1;
+	}
+	&target[index..]
 }
 
-impl CodeAt {
-	// new
-	pub fn new(index: usize) -> Self {
-		CodeAt { index }
+// trim chars right whitespaces
+fn chars_trim_right(target: &[char]) -> &[char] {
+	let mut end_index: usize = target.len();
+	for ch in target.iter().rev() {
+		if !ch.is_ascii_whitespace() {
+			break;
+		}
+		end_index -= 1;
 	}
-	// create a begin position
-	pub fn begin() -> Self {
-		CodeAt::new(0)
+	&target[..end_index]
+}
+
+// trim chars  whitespaces
+fn chars_trim(target: &[char]) -> &[char] {
+	chars_trim_right(chars_trim_left(target))
+}
+
+// check if contains chars
+fn contains_chars(
+	target: &[char],
+	search: &[char],
+	case: &Option<NameCase>,
+	max_start_index: Option<usize>,
+) -> bool {
+	// check length
+	let t_len = target.len();
+	let s_len = search.len();
+	if t_len < s_len {
+		return false;
 	}
-	// move to next col
-	pub fn move_one(&mut self) {
-		self.index += 1;
-	}
-	// get the next col position
-	pub fn next_col(&self) -> Self {
-		CodeAt {
-			index: self.index + 1,
+	// check characters
+	let is_equal = if let Some(case) = case {
+		match case {
+			NameCase::Lower => |a: &char, b: &char| -> bool { a == b || &a.to_ascii_lowercase() == b },
+			NameCase::Upper => |a: &char, b: &char| -> bool { a == b || &a.to_ascii_uppercase() == b },
+		}
+	} else {
+		|a: &char, b: &char| -> bool { a == b }
+	};
+	let mut t_index: usize = 0;
+	let mut s_index: usize = 0;
+	let max_t_index: usize = max_start_index.unwrap_or(t_len - s_len);
+	loop {
+		for (index, ch) in target[t_index..].iter().enumerate() {
+			if !is_equal(ch, &search[s_index]) {
+				break;
+			}
+			s_index += 1;
+		}
+		if s_index == s_len {
+			return true;
+		}
+		if t_index < max_t_index {
+			s_index = 0;
+			t_index += 1;
+		} else {
+			break;
 		}
 	}
+	false
+}
+// check if equal
+fn is_equal_chars(target: &[char], cmp: &[char], case: &Option<NameCase>) -> bool {
+	contains_chars(target, cmp, case, Some(0))
 }
 
 /**
@@ -356,33 +318,30 @@ pub struct Attr {
 
 #[derive(Debug, Default)]
 pub struct AttrData {
-	pub content: String,
+	pub content: Vec<char>,
 }
 
 impl Attr {
 	// build attribute code
-	pub fn build(&self, remove_quote: bool) -> String {
-		let mut ret = String::with_capacity(ALLOC_CHAR_CAPACITY);
+	pub fn build(&self, remove_quote: bool) -> Vec<char> {
+		let mut ret = Vec::with_capacity(ALLOC_CHAR_CAPACITY);
 		let mut has_key = false;
 		if let Some(AttrData { content, .. }) = &self.key {
-			ret.push_str(content);
+			ret.extend_from_slice(&content[..]);
 			has_key = true;
 		}
 		if let Some(AttrData { content, .. }) = &self.value {
 			if has_key {
 				ret.push(EQUAL_CHAR);
 			}
-			let mut use_quote: Option<char> = None;
 			if let Some(quote) = self.quote {
 				if self.need_quote || !remove_quote {
 					ret.push(quote);
-					use_quote = Some(quote);
+					ret.extend_from_slice(&content[..]);
+					return ret;
 				}
 			}
-			ret.push_str(content);
-			if let Some(quote) = use_quote {
-				ret.push(quote);
-			}
+			ret.extend_from_slice(&content[..]);
 		}
 		ret
 	}
@@ -393,9 +352,9 @@ impl Attr {
 	// check if id
 	pub fn check_if_id(&self) -> Option<String> {
 		if let Some(key) = &self.key {
-			if key.content.to_ascii_lowercase() == "id" {
+			if is_equal_chars(&key.content, &['i', 'd'], &Some(NameCase::Lower)) {
 				if let Some(value) = &self.value {
-					return Some(value.content.trim().into());
+					return Some(value.content.iter().collect::<String>());
 				}
 			}
 		}
@@ -436,33 +395,39 @@ pub struct TagMeta {
 	pub is_void: bool,
 	pub self_closed: bool,
 	pub auto_fix: bool,
-	pub name: String,
+	pub name: Vec<char>,
 	pub attrs: Vec<Attr>,
 	pub lc_name_map: HashMap<String, usize>,
 }
 
 impl TagMeta {
-	pub fn get_name(&self, case: Option<NameCase>) -> String {
+	pub fn get_name(&self, case: Option<NameCase>) -> &Vec<char> {
 		if let Some(case) = case {
 			match case {
-				NameCase::Upper => self.name.to_ascii_uppercase(),
-				NameCase::Lower => self.name.to_ascii_lowercase(),
+				NameCase::Upper => self
+					.name
+					.iter()
+					.map(|ch| ch.to_ascii_uppercase())
+					.collect::<Vec<char>>()
+					.as_ref(),
+				NameCase::Lower => self
+					.name
+					.iter()
+					.map(|ch| ch.to_ascii_lowercase())
+					.collect::<Vec<char>>()
+					.as_ref(),
 			}
 		} else {
-			self.name.clone()
+			&self.name
 		}
 	}
-	pub fn attrs_to_string(&self, remove_quote: bool) -> String {
-		let segs: Vec<String> = self
+	pub fn attrs_to_string(&self, remove_quote: bool) -> Vec<char> {
+		self
 			.attrs
 			.iter()
 			.map(|attr| attr.build(remove_quote))
-			.collect();
-		if !segs.is_empty() {
-			format!(" {}", segs.join(" "))
-		} else {
-			String::from("")
-		}
+			.flatten()
+			.collect()
 	}
 	// add a key attr
 	pub fn add_attr_key(&mut self) {
@@ -480,7 +445,7 @@ impl TagMeta {
 		});
 	}
 	// set attr key
-	pub fn set_attr_key(&mut self, key: String) {
+	pub fn set_attr_key(&mut self, key: Vec<char>) {
 		let attr = self
 			.attrs
 			.last_mut()
@@ -488,7 +453,7 @@ impl TagMeta {
 		attr.key = Some(AttrData { content: key });
 	}
 	// set attr value
-	pub fn set_attr_value(&mut self, value: String, quote: Option<char>) -> &Attr {
+	pub fn set_attr_value(&mut self, value: Vec<char>, quote: Option<char>) -> &Attr {
 		let attr = self
 			.attrs
 			.last_mut()
@@ -603,8 +568,8 @@ impl Node {
 		}
 	}
 	// build node
-	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus) -> String {
-		let mut result = String::with_capacity(5);
+	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus) -> Vec<char> {
+		let mut result: Vec<char> = Vec::with_capacity(50);
 		let is_in_pre = status.is_in_pre;
 		let inner_type = status.inner_type.as_ref();
 		let is_inner = inner_type.is_some();
@@ -634,21 +599,22 @@ impl Node {
 						if !content.is_empty() {
 							if options.decode_entity {
 								let decode_content = get_content_decode(&Some(content));
-								result.push_str(&decode_content);
+								result.extend(decode_content);
 							} else {
-								result.push_str(&content.iter().collect::<String>());
+								result.extend_from_slice(&content[..]);
 							}
 						}
 					}
 				} else {
 					// when has content
 					if self.content.is_some() {
-						let content = if options.decode_entity {
-							get_content_decode(&self.content)
+						if options.decode_entity {
+							let content = get_content_decode(&self.content);
+							result.extend(content);
 						} else {
-							get_content(&self.content)
+							let content = get_content(&self.content);
+							result.extend_from_slice(&content[..]);
 						};
-						result.push_str(content.as_str());
 					}
 				}
 			}
@@ -667,47 +633,57 @@ impl Node {
 				// check if is in pre, only check if not in pre
 				status.is_in_pre = is_in_pre || {
 					if options.lowercase_tagname {
-						tag_name == "pre"
+						is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &None)
 					} else {
-						tag_name.to_lowercase() == "pre"
+						is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &Some(NameCase::Lower))
 					}
 				};
 				if !is_inner {
 					let attrs = meta.attrs_to_string(options.remove_attr_quote);
-					let tag = format!("<{}{}", tag_name, attrs);
-					result.push_str(tag.as_str());
+					result.push('<');
+					result.extend_from_slice(&attrs[..]);
+					result.extend_from_slice(&tag_name[..]);
 					// add self closing
 					if meta.self_closed || (meta.auto_fix && options.always_close_void) {
-						result.push_str(" /");
+						result.push(EMPTY_CHAR);
+						result.push('/');
 					}
 					// add end char
 					result.push(TAG_END_CHAR);
 				}
 				// content for some special tags, such as style/script
 				if self.content.is_some() {
-					let need_encode = options.encode_content && is_plain_text_tag(&tag_name);
+					let need_encode =
+						options.encode_content && is_plain_text_tag(&tag_name, &Some(NameCase::Lower));
 					if !need_encode {
-						result.push_str(get_content(&self.content).as_str());
+						result.extend_from_slice(get_content(&self.content));
 					} else {
 						// content tag's html need encode
-						result.push_str(get_content_encode(&self.content).as_str());
+						result.extend(get_content_encode(&self.content));
 					}
 				}
 			}
 			TagEnd => {
-				let mut content = get_content(&self.content);
-				if is_in_pre && content.trim_end().to_lowercase() == "pre" {
+				let content = get_content(&self.content);
+				let mut content = &content[..];
+				if is_in_pre
+					&& is_equal_chars(
+						chars_trim_right(&content),
+						&PRE_TAG_NAME,
+						&Some(NameCase::Lower),
+					) {
 					status.is_in_pre = false;
 				}
 				if !is_inner {
 					if options.remove_endtag_space {
-						content = content.trim_end().to_string();
+						content = chars_trim_right(&content[..]);
 					}
 					if options.lowercase_tagname {
-						content = content.to_lowercase();
+						content.iter_mut().for_each(|e| *e = e.to_ascii_lowercase())
 					}
-					content = format!("</{}>", content);
-					result.push_str(content.as_str());
+					result.extend_from_slice(&['<', '/']);
+					result.extend_from_slice(&content);
+					result.push('>');
 				}
 			}
 			HTMLDOCTYPE => {
@@ -716,34 +692,34 @@ impl Node {
 					.as_ref()
 					.expect("tag's meta data must have.")
 					.borrow();
-				let content = format!(
-					"<!{}{}>",
-					meta.name,
-					meta.attrs_to_string(options.remove_attr_quote)
-				);
-				result.push_str(content.as_str());
+				result.extend_from_slice(&['<', '!']);
+				result.extend_from_slice(&meta.name);
+				result.extend_from_slice(&meta.attrs_to_string(options.remove_attr_quote));
+				result.push('>');
 			}
 			Comment => {
 				if !options.remove_comment {
 					// comment
-					let comment = format!("<!--{}-->", get_content(&self.content));
-					result.push_str(comment.as_str());
+					result.extend_from_slice(&['<', '!', '-', '-']);
+					result.extend_from_slice(get_content(&self.content));
+					result.extend_from_slice(&['-', '-', '>']);
 				}
 			}
 			XMLCDATA => {
 				// cdata
-				let content = format!("<![CDATA[{}]]>", get_content(&self.content));
-				result.push_str(content.as_str());
+				result.extend_from_slice(&['<', '!', '[', 'C', 'D', 'A', 'T', 'A', '[']);
+				result.extend_from_slice(get_content(&self.content));
+				result.extend_from_slice(&[']', ']', '>']);
 			}
 			_ => {}
 		}
 		result
 	}
 	// build node tree
-	fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus) -> String {
-		let mut result = String::with_capacity(ALLOC_CHAR_CAPACITY);
+	fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus) -> Vec<char> {
+		let mut result: Vec<Vec<char>> = Vec::with_capacity(50);
 		let content = self.build_node(options, status);
-		result.push_str(content.as_str());
+		result.push(content);
 		if let Some(childs) = &self.childs {
 			for child in childs {
 				let mut sub_status = status.clone();
@@ -753,17 +729,17 @@ impl Node {
 				}
 				let child = child.borrow();
 				let content = child.build_tree(options, &mut sub_status);
-				result.push_str(content.as_str());
+				result.push(content);
 			}
 		}
 		if let Some(end_tag) = &self.end_tag {
 			let content = end_tag.borrow().build_node(options, status);
-			result.push_str(content.as_str());
+			result.push(content);
 		}
-		result
+		result.into_iter().flatten().collect::<Vec<char>>()
 	}
 	// build
-	pub fn build(&self, options: &RenderOptions, inner_text: bool) -> String {
+	pub fn build(&self, options: &RenderOptions, inner_text: bool) -> Vec<char> {
 		let inner_type = if inner_text {
 			// wrong render options when call inner_text
 			if options.inner_html {
@@ -810,7 +786,7 @@ impl Node {
 					throw_wrong_node(&childs[childs.len() - 1].borrow().node_type);
 				}
 				// abstract without any child
-				return String::from("");
+				return vec![];
 			}
 			if self.node_type != NodeType::Tag {
 				throw_wrong_node(&self.node_type);
@@ -841,7 +817,11 @@ impl Node {
 							} else {
 								// check if is html tag
 								if let Some(meta) = &child_node.meta {
-									if meta.borrow().get_name(Some(NameCase::Lower)) == "html" {
+									if is_equal_chars(
+										meta.borrow().get_name(Some(NameCase::Lower)),
+										&HTML_TAG_NAME,
+										&None,
+									) {
 										find_html = true;
 										is_document = true;
 									} else {
@@ -881,7 +861,7 @@ impl SpecialTag {
 	pub fn is_ok(
 		&self,
 		code_in: &CodeTypeIn,
-		tag_name: &str,
+		tag_name: &[char],
 		c: &char,
 		position: &CodeAt,
 		context: &str,
@@ -903,7 +883,9 @@ impl SpecialTag {
 					_ => {
 						let message = format!(
 							"the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
-							tag_name, code_in, position
+							tag_name.iter().collect::<String>(),
+							code_in,
+							position
 						);
 						return create_parse_error(ErrorKind::CommonError(message), *position, context);
 					}
@@ -915,8 +897,6 @@ impl SpecialTag {
 	}
 }
 
-pub type GenResult<T> = Result<T, Box<dyn Error>>;
-pub type HResult = GenResult<()>;
 type NextHandle = fn(&mut Doc, char, &str) -> HResult;
 
 /*
@@ -1076,7 +1056,7 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 							// wrong self closing tag
 							if !meta.borrow().is_void {
 								return doc.error(
-									ErrorKind::WrongSelfClosing(meta.borrow().name.clone()),
+									ErrorKind::WrongSelfClosing(meta.borrow().name.iter().collect::<String>()),
 									context,
 								);
 							}
@@ -1286,7 +1266,9 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 						.as_ref()
 						.expect("Tag node must have a meta of tag name")
 						.borrow()
-						.get_name(None);
+						.get_name(None)
+						.iter()
+						.collect::<String>();
 					if last_tag_name.to_lowercase() == fix_end_tag_name {
 						if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
 							return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
@@ -1606,7 +1588,8 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 							.expect("Chain nodes must all be tag nodes")
 							.borrow()
 							.name
-							.as_str()
+							.iter()
+							.collect::<String>()
 					{
 						return create_parse_error(
 							ErrorKind::CommonError("<![CDATA tag can in sub node".into()),
@@ -1891,7 +1874,7 @@ impl Doc {
 				// make end tag
 				let tag_name = meta.borrow().get_name(None);
 				let mut end = Node::new(NodeType::TagEnd, self.position);
-				end.content = Some(tag_name.chars().collect());
+				end.content = Some(tag_name.clone());
 				end.parent = Some(Rc::downgrade(&tag_node));
 				end_tag = Some(end);
 			}
@@ -1989,14 +1972,15 @@ impl Doc {
 			if !self.parse_options.auto_fix_unclosed_tag {
 				let last_node = self.chain_nodes[cur_depth - 1].borrow();
 				let begin_at = last_node.begin_at;
-				let name = &last_node
+				let name = last_node
 					.meta
 					.as_ref()
 					.expect("tag node's meta must have")
 					.borrow()
-					.name;
-
-				return create_parse_error(ErrorKind::UnclosedTag(name.to_owned()), begin_at, context);
+					.name
+					.iter()
+					.collect::<String>();
+				return create_parse_error(ErrorKind::UnclosedTag(name), begin_at, context);
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
@@ -2043,9 +2027,12 @@ impl Doc {
 	}
 	// set tag meta
 	fn set_tag_meta(&mut self) -> bool {
-		let name = self.clean_chars_to_string();
-		let lc_name = name.to_ascii_lowercase();
-		let is_void = is_void_tag(&lc_name);
+		let name = self.clean_chars_to_vec();
+		let lc_name = name
+			.iter()
+			.map(|ch| ch.to_ascii_lowercase())
+			.collect::<Vec<char>>();
+		let is_void = is_void_tag(&name);
 		let meta = TagMeta {
 			name,
 			attrs: Vec::with_capacity(5),
@@ -2089,16 +2076,17 @@ impl Doc {
 	}
 	// set attr key
 	fn set_tag_attr_key(&mut self) {
-		let key = self.clean_chars_to_string();
+		let key = self.clean_chars_to_vec();
 		if let Some(meta) = &self.current_node.borrow_mut().meta {
 			let mut meta = meta.borrow_mut();
 			let index = meta.attrs.len() - 1;
+			let key_name = key
+				.iter()
+				.map(|ch| ch.to_ascii_lowercase())
+				.collect::<String>();
 			// end the attribute
 			// insert lowercase attribute name to maps
-			meta
-				.lc_name_map
-				.entry(key.to_ascii_lowercase())
-				.or_insert(index);
+			meta.lc_name_map.entry(key_name).or_insert(index);
 			// set cur attr key
 			meta.set_attr_key(key);
 		}
@@ -2115,7 +2103,7 @@ impl Doc {
 	}
 	// set attr value
 	fn set_tag_attr_value(&mut self, quote: Option<char>) {
-		let value = self.clean_chars_to_string();
+		let value = self.clean_chars_to_vec();
 		if let Some(meta) = &self.current_node.borrow_mut().meta {
 			let mut meta = meta.borrow_mut();
 			// set attribute value
@@ -2190,12 +2178,24 @@ pub struct DocHolder {
 impl DocHolder {
 	// render
 	pub fn render(&self, options: &RenderOptions) -> String {
-		self.borrow().root.borrow().build(options, false)
+		self
+			.borrow()
+			.root
+			.borrow()
+			.build(options, false)
+			.iter()
+			.collect::<String>()
 	}
 
 	// render text
 	pub fn render_text(&self, options: &RenderOptions) -> String {
-		self.borrow().root.borrow().build(options, true)
+		self
+			.borrow()
+			.root
+			.borrow()
+			.build(options, true)
+			.iter()
+			.collect::<String>()
 	}
 
 	// borrow
