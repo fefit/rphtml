@@ -203,25 +203,12 @@ pub enum CodeTypeIn {
 	TextNode,          // text node
 }
 
-fn get_content(content: &Option<Vec<char>>) -> &Vec<char> {
-	match content {
-		Some(content) => content,
-		_ => &vec![],
-	}
+fn get_content_encode(content: &[char]) -> Vec<char> {
+	encode(&content, &EntitySet::Html, &EncodeType::Named)
 }
 
-fn get_content_encode(content: &Option<Vec<char>>) -> Vec<char> {
-	match content {
-		Some(content) => encode(&content, &EntitySet::Html, &EncodeType::Named),
-		_ => vec![],
-	}
-}
-
-fn get_content_decode(content: &Option<Vec<char>>) -> Vec<char> {
-	match content {
-		Some(content) => decode_chars(content),
-		_ => vec![],
-	}
+fn get_content_decode(content: &[char]) -> Vec<char> {
+	decode_chars(content)
 }
 // trim chars left whitespaces
 fn chars_trim_left(target: &[char]) -> &[char] {
@@ -575,47 +562,49 @@ impl Node {
 		let is_inner = inner_type.is_some();
 		use NodeType::*;
 		match self.node_type {
-			Text | SpacesBetweenTag => {
-				if !is_in_pre && options.minify_spaces {
-					if self.node_type == SpacesBetweenTag {
-						// spaces between tag,just remove it
-					} else {
-						let mut prev_is_space = false;
-						// check if need decode
-						let mut content: Vec<char> = Vec::with_capacity(5);
-						for &c in self.content.as_ref().unwrap().iter() {
-							if c.is_ascii_whitespace() {
-								if prev_is_space {
-									continue;
-								}
-								prev_is_space = true;
-								content.push(EMPTY_CHAR);
-							} else {
-								prev_is_space = false;
-								content.push(c);
+			Text => {
+				// check if need decode
+				let mut content: Vec<char> = Vec::with_capacity(5);
+				let last_content = if !is_in_pre && options.minify_spaces {
+					// just keep one space
+					let mut prev_is_space = false;
+					for &c in self.content.as_ref().unwrap().iter() {
+						if c.is_ascii_whitespace() {
+							if prev_is_space {
+								continue;
 							}
-						}
-						// when need decode, the content should append to result
-						if !content.is_empty() {
-							if options.decode_entity {
-								let decode_content = get_content_decode(&Some(content));
-								result.extend(decode_content);
-							} else {
-								result.extend_from_slice(&content[..]);
-							}
-						}
-					}
-				} else {
-					// when has content
-					if self.content.is_some() {
-						if options.decode_entity {
-							let content = get_content_decode(&self.content);
-							result.extend(content);
+							prev_is_space = true;
+							content.push(c);
 						} else {
-							let content = get_content(&self.content);
-							result.extend_from_slice(&content[..]);
-						};
+							prev_is_space = false;
+							content.push(c);
+						}
 					}
+					&content
+				} else {
+					// original content
+					self
+						.content
+						.as_ref()
+						.expect("Text node's conetnt must not empty")
+				};
+				// when need decode, the content should append to result
+				if options.decode_entity {
+					let decode_content = get_content_decode(&last_content);
+					result.extend(decode_content);
+				} else {
+					result.extend_from_slice(&last_content);
+				}
+			}
+			SpacesBetweenTag => {
+				if !is_in_pre && options.minify_spaces {
+					// do nothing
+				} else {
+					let content = self
+						.content
+						.as_ref()
+						.expect("Spaces between node must have whitespcaes");
+					result.extend_from_slice(&content);
 				}
 			}
 			Tag => {
@@ -652,19 +641,22 @@ impl Node {
 					result.push(TAG_END_CHAR);
 				}
 				// content for some special tags, such as style/script
-				if self.content.is_some() {
+				if let Some(content) = &self.content {
 					let need_encode =
 						options.encode_content && is_plain_text_tag(&tag_name, &Some(NameCase::Lower));
 					if !need_encode {
-						result.extend_from_slice(get_content(&self.content));
+						result.extend_from_slice(&content);
 					} else {
 						// content tag's html need encode
-						result.extend(get_content_encode(&self.content));
+						result.extend(get_content_encode(&content));
 					}
 				}
 			}
 			TagEnd => {
-				let content = get_content(&self.content);
+				let content = self
+					.content
+					.as_ref()
+					.expect("End tag's tag name must not empty");
 				let mut content = &content[..];
 				if is_in_pre
 					&& is_equal_chars(
@@ -679,10 +671,16 @@ impl Node {
 						content = chars_trim_right(&content[..]);
 					}
 					if options.lowercase_tagname {
-						content.iter_mut().for_each(|e| *e = e.to_ascii_lowercase())
+						let content = content
+							.iter()
+							.map(|e| e.to_ascii_lowercase())
+							.collect::<Vec<char>>();
+						result.extend(content);
+					} else {
+						result.extend_from_slice(&content);
 					}
 					result.extend_from_slice(&['<', '/']);
-					result.extend_from_slice(&content);
+
 					result.push('>');
 				}
 			}
@@ -701,14 +699,18 @@ impl Node {
 				if !options.remove_comment {
 					// comment
 					result.extend_from_slice(&['<', '!', '-', '-']);
-					result.extend_from_slice(get_content(&self.content));
+					if let Some(content) = &self.content {
+						result.extend_from_slice(&content);
+					}
 					result.extend_from_slice(&['-', '-', '>']);
 				}
 			}
 			XMLCDATA => {
 				// cdata
 				result.extend_from_slice(&['<', '!', '[', 'C', 'D', 'A', 'T', 'A', '[']);
-				result.extend_from_slice(get_content(&self.content));
+				if let Some(content) = &self.content {
+					result.extend_from_slice(&content);
+				}
 				result.extend_from_slice(&[']', ']', '>']);
 			}
 			_ => {}
@@ -1584,7 +1586,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 			}
 			LEFT_BRACKET_CHAR => {
 				// CDATA
-				let special_tag_name = doc.in_special.map(|(_, name)| name);
+				let special_tag_name = doc.in_special.as_ref().map(|(_, name)| name);
 				if let Some(tag_name) = special_tag_name {
 					if is_equal_chars(
 						&tag_name,
@@ -1813,8 +1815,8 @@ impl Doc {
 		let _ = handle(self, *c, content)?;
 		self.position.move_one();
 		// check if special, and character is ok
-		if let Some((special, tag_name)) = self.in_special {
-			special.is_ok(&self.code_in, &tag_name, &c, &self.position, content)?;
+		if let Some((special, tag_name)) = &self.in_special {
+			special.is_ok(&self.code_in, tag_name, &c, &self.position, content)?;
 		}
 		// parse ok
 		Ok(())
@@ -2133,14 +2135,9 @@ impl Doc {
 		let is_in_svg = self
 			.check_special()
 			.map_or(false, |special| special == SpecialTag::Svg);
-		let tag_name = self
-			.current_node
-			.borrow()
-			.meta
-			.as_ref()
-			.expect("")
-			.borrow()
-			.name;
+		let current_node = self.current_node.borrow();
+		let meta = current_node.meta.as_ref().expect("").borrow();
+		let tag_name = &meta.name;
 		let lc_tag_name = tag_name
 			.iter()
 			.map(|ch| ch.to_ascii_lowercase())
