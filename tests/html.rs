@@ -1,5 +1,6 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
+use rphtml::types::{GenResult, HResult};
 
 fn parse(code: &str) -> GenResult<DocHolder> {
 	let doc = Doc::parse(code, Default::default())?;
@@ -9,8 +10,13 @@ fn render(doc: &DocHolder) -> String {
 	doc.render(&Default::default())
 }
 
+fn to_static_str(content: String) -> &'static str {
+	Box::leak(content.into_boxed_str())
+}
+
 fn get_attr_content(v: &Option<AttrData>) -> Option<&str> {
-	v.as_ref().map(|AttrData { content, .. }| content.as_str())
+	v.as_ref()
+		.map(|AttrData { content, .. }| to_static_str(content.iter().collect::<String>()))
 }
 
 #[test]

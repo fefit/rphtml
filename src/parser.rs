@@ -46,7 +46,7 @@ lazy_static! {
 		use DetectChar::*;
 		let mut map = HashMap::new();
 		map.insert(Comment, vec![DASH_CHAR, DASH_CHAR]);
-		map.insert(DOCTYPE, vec!['d', 'o', 'c', 't', 'y', 'p', 'e']);
+		map.insert(DOCTYPE, vec!['D', 'O', 'C', 'T', 'Y', 'P', 'E']);
 		map.insert(
 			XMLCDATA,
 			vec![
@@ -81,7 +81,7 @@ lazy_static! {
 		use SpecialTag::*;
 		let mut map = HashMap::new();
 		map.insert(vec!['s', 'v', 'g'], Svg);
-		map.insert(vec!['m', 'a', 't', 't'], MathML);
+		map.insert(vec!['m', 'a', 't', 'h'], MathML);
 		map
 	};
 	static ref MUST_QUOTE_ATTR_CHARS: Vec<char> = vec![
@@ -223,7 +223,7 @@ fn chars_trim_left(target: &[char]) -> &[char] {
 }
 
 // trim chars right whitespaces
-fn chars_trim_right(target: &[char]) -> &[char] {
+fn chars_trim_end(target: &[char]) -> &[char] {
 	let mut end_index: usize = target.len();
 	for ch in target.iter().rev() {
 		if !ch.is_ascii_whitespace() {
@@ -236,7 +236,7 @@ fn chars_trim_right(target: &[char]) -> &[char] {
 
 // trim chars  whitespaces
 fn chars_trim(target: &[char]) -> &[char] {
-	chars_trim_right(chars_trim_left(target))
+	chars_trim_end(chars_trim_left(target))
 }
 
 // check if contains chars
@@ -265,7 +265,7 @@ fn contains_chars(
 	let mut s_index: usize = 0;
 	let max_t_index: usize = max_start_index.unwrap_or(t_len - s_len);
 	loop {
-		for (index, ch) in target[t_index..].iter().enumerate() {
+		for ch in target[t_index..].iter() {
 			if !is_equal(ch, &search[s_index]) {
 				break;
 			}
@@ -288,6 +288,36 @@ fn is_equal_chars(target: &[char], cmp: &[char], case: &Option<NameCase>) -> boo
 	contains_chars(target, cmp, case, Some(0))
 }
 
+fn is_equal_chars_ignore_case(target: &[char], cmp: &[char]) -> (bool, bool) {
+	if target.len() != cmp.len() {
+		return (false, false);
+	}
+	let mut is_total_same = true;
+	for (index, ch) in target.iter().enumerate() {
+		let cmp_ch = &cmp[index];
+		if cmp_ch == ch {
+			continue;
+		}
+		is_total_same = false;
+		match cmp_ch {
+			'a'..='z' => {
+				if &cmp_ch.to_ascii_uppercase() != ch {
+					return (false, false);
+				}
+			}
+			'A'..='Z' => {
+				if &cmp_ch.to_ascii_lowercase() != ch {
+					return (false, false);
+				}
+			}
+			_ => {
+				// not equal
+				return (false, false);
+			}
+		}
+	}
+	(true, is_total_same)
+}
 /**
  * Attr
  * attribute data
@@ -325,6 +355,7 @@ impl Attr {
 				if self.need_quote || !remove_quote {
 					ret.push(quote);
 					ret.extend_from_slice(&content[..]);
+					ret.push(quote);
 					return ret;
 				}
 			}
@@ -388,31 +419,15 @@ pub struct TagMeta {
 }
 
 impl TagMeta {
-	pub fn get_name(&self, case: Option<NameCase>) -> &Vec<char> {
-		if let Some(case) = case {
-			match case {
-				NameCase::Upper => self
-					.name
-					.iter()
-					.map(|ch| ch.to_ascii_uppercase())
-					.collect::<Vec<char>>()
-					.as_ref(),
-				NameCase::Lower => self
-					.name
-					.iter()
-					.map(|ch| ch.to_ascii_lowercase())
-					.collect::<Vec<char>>()
-					.as_ref(),
-			}
-		} else {
-			&self.name
-		}
-	}
 	pub fn attrs_to_string(&self, remove_quote: bool) -> Vec<char> {
 		self
 			.attrs
 			.iter()
-			.map(|attr| attr.build(remove_quote))
+			.map(|attr| {
+				let mut attr_content = attr.build(remove_quote);
+				attr_content.splice(0..0, vec![EMPTY_CHAR]);
+				attr_content
+			})
 			.flatten()
 			.collect()
 	}
@@ -613,25 +628,25 @@ impl Node {
 					.as_ref()
 					.expect("tag's meta data must have.")
 					.borrow();
-				let name_case = if options.lowercase_tagname {
-					Some(NameCase::Lower)
-				} else {
-					None
-				};
-				let tag_name = meta.get_name(name_case);
+				let tag_name = &meta.name;
 				// check if is in pre, only check if not in pre
-				status.is_in_pre = is_in_pre || {
-					if options.lowercase_tagname {
-						is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &None)
-					} else {
-						is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &Some(NameCase::Lower))
-					}
-				};
+				status.is_in_pre =
+					is_in_pre || is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &Some(NameCase::Lower));
 				if !is_inner {
-					let attrs = meta.attrs_to_string(options.remove_attr_quote);
+					// add tag name
 					result.push('<');
-					result.extend_from_slice(&attrs[..]);
-					result.extend_from_slice(&tag_name[..]);
+					if !options.lowercase_tagname {
+						result.extend_from_slice(&tag_name[..]);
+					} else {
+						for ch in tag_name {
+							result.push(ch.to_ascii_lowercase());
+						}
+					}
+					// add attrs
+					if !meta.attrs.is_empty() {
+						let attrs = meta.attrs_to_string(options.remove_attr_quote);
+						result.extend_from_slice(&attrs[..]);
+					}
 					// add self closing
 					if meta.self_closed || (meta.auto_fix && options.always_close_void) {
 						result.push(EMPTY_CHAR);
@@ -660,15 +675,16 @@ impl Node {
 				let mut content = &content[..];
 				if is_in_pre
 					&& is_equal_chars(
-						chars_trim_right(&content),
+						chars_trim_end(&content),
 						&PRE_TAG_NAME,
 						&Some(NameCase::Lower),
 					) {
 					status.is_in_pre = false;
 				}
 				if !is_inner {
+					result.extend_from_slice(&['<', '/']);
 					if options.remove_endtag_space {
-						content = chars_trim_right(&content[..]);
+						content = chars_trim_end(&content[..]);
 					}
 					if options.lowercase_tagname {
 						let content = content
@@ -679,8 +695,6 @@ impl Node {
 					} else {
 						result.extend_from_slice(&content);
 					}
-					result.extend_from_slice(&['<', '/']);
-
 					result.push('>');
 				}
 			}
@@ -692,7 +706,9 @@ impl Node {
 					.borrow();
 				result.extend_from_slice(&['<', '!']);
 				result.extend_from_slice(&meta.name);
-				result.extend_from_slice(&meta.attrs_to_string(options.remove_attr_quote));
+				if !meta.attrs.is_empty() {
+					result.extend_from_slice(&meta.attrs_to_string(options.remove_attr_quote));
+				}
 				result.push('>');
 			}
 			Comment => {
@@ -820,9 +836,9 @@ impl Node {
 								// check if is html tag
 								if let Some(meta) = &child_node.meta {
 									if is_equal_chars(
-										meta.borrow().get_name(Some(NameCase::Lower)),
+										meta.borrow().name.as_slice(),
 										&HTML_TAG_NAME,
-										&None,
+										&Some(NameCase::Lower),
 									) {
 										find_html = true;
 										is_document = true;
@@ -912,12 +928,11 @@ fn noop(_d: &mut Doc, _c: char, _content: &str) -> HResult {
  * code_in:  Unkown | AbstractRoot
 */
 fn parse_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
-	use CodeTypeIn::*;
 	match c {
 		// match the tag start '<'
 		TAG_BEGIN_CHAR => {
 			doc.mem_position = doc.position;
-			doc.set_code_in(UnkownTag);
+			doc.set_code_in(CodeTypeIn::UnkownTag);
 		}
 		_ => {
 			if doc.parse_options.auto_fix_unexpected_endtag
@@ -945,7 +960,7 @@ fn parse_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 				doc.repeat_whitespace = c.is_ascii_whitespace();
 			}
 			doc.prev_chars.push(c);
-			doc.set_code_in(TextNode);
+			doc.set_code_in(CodeTypeIn::TextNode);
 		}
 	}
 	Ok(())
@@ -1256,24 +1271,27 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 	// the end tag
 	match c {
 		TAG_END_CHAR => {
-			let end_tag_name = doc.chars_to_string();
-			let fix_end_tag_name = end_tag_name.trim_end().to_lowercase();
+			let end_tag_name = doc.prev_chars.clone();
+			let fix_end_tag_name = chars_trim_end(&end_tag_name);
 			let mut is_endtag_ok = false;
 			// check if the tag matched
 			if doc.chain_nodes.len() > 1 {
-				if let Some(last_tag) = doc.chain_nodes.last() {
-					let last_tag_name = last_tag
-						.borrow()
+				if let Some(tag) = doc.chain_nodes.last() {
+					let tag = tag.borrow();
+					let meta = tag
 						.meta
 						.as_ref()
 						.expect("Tag node must have a meta of tag name")
-						.borrow()
-						.get_name(None)
-						.iter()
-						.collect::<String>();
-					if last_tag_name.to_lowercase() == fix_end_tag_name {
-						if doc.parse_options.case_sensitive_tagname && last_tag_name != fix_end_tag_name {
-							return doc.error(ErrorKind::WrongCaseSensitive(last_tag_name), context);
+						.borrow();
+					let start_tag_name = &meta.name;
+					let (is_equal, is_total_same) =
+						is_equal_chars_ignore_case(&start_tag_name, &end_tag_name);
+					if is_equal {
+						if doc.parse_options.case_sensitive_tagname && !is_total_same {
+							return doc.error(
+								ErrorKind::WrongCaseSensitive(doc.chars_to_string()),
+								context,
+							);
 						}
 						is_endtag_ok = true;
 					}
@@ -1302,29 +1320,20 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 				doc.set_code_in(Unkown);
 				// end of special tag
 				if doc.in_special.is_some()
-					&& doc
-						.in_special
-						.as_ref()
-						.unwrap()
-						.1
-						.iter()
-						.map(|ch| ch.to_ascii_lowercase())
-						.collect::<String>()
-						== fix_end_tag_name
+					&& is_equal_chars_ignore_case(&doc.in_special.as_ref().unwrap().1, fix_end_tag_name).0
 				{
 					doc.in_special = None;
 				}
 				// set end tag more info
+				let content = doc.clean_chars_to_vec();
 				let mut current_node = doc.current_node.borrow_mut();
 				current_node.parent = Some(Rc::downgrade(&last_tag));
-				current_node.content = Some(end_tag_name.chars().collect());
-				// clear chars
-				doc.prev_chars.clear();
+				current_node.content = Some(content);
 			} else {
 				// no matched start tag
 				if !doc.parse_options.auto_fix_unexpected_endtag {
 					// wrong end tag without start tag
-					return doc.error(ErrorKind::WrongEndTag(end_tag_name), context);
+					return doc.error(ErrorKind::WrongEndTag(doc.chars_to_string()), context);
 				} else {
 					// set orig current node
 					let mut orig_current_node: Option<RefNode> = None;
@@ -1543,7 +1552,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 							} else {
 								code_in = XMLCDATA;
 								doc.mark_char = RIGHT_BRACKET_CHAR;
-								// new html doctype node
+								// new cdata
 								node_type = NodeType::XMLCDATA;
 							}
 							doc.set_code_in(code_in);
@@ -1883,7 +1892,7 @@ impl Doc {
 				// set it's meta as auto fix
 				meta.borrow_mut().auto_fix = true;
 				// make end tag
-				let tag_name = meta.borrow().get_name(None);
+				let tag_name = &meta.borrow().name;
 				let mut end = Node::new(NodeType::TagEnd, self.position);
 				end.content = Some(tag_name.clone());
 				end.parent = Some(Rc::downgrade(&tag_node));
@@ -1972,8 +1981,8 @@ impl Doc {
 		Ok(())
 	}
 	// is in svg or mathml
-	fn check_special(&self) -> Option<SpecialTag> {
-		self.in_special.map(|(special, _)| special)
+	fn check_special(&self) -> Option<&SpecialTag> {
+		self.in_special.as_ref().map(|(special, _)| special)
 	}
 	// end of the doc
 	fn eof(&mut self, context: &str) -> HResult {
@@ -2043,7 +2052,7 @@ impl Doc {
 			.iter()
 			.map(|ch| ch.to_ascii_lowercase())
 			.collect::<Vec<char>>();
-		let is_void = is_void_tag(&name);
+		let is_void = is_void_tag(&lc_name);
 		let meta = TagMeta {
 			name,
 			attrs: Vec::with_capacity(5),
@@ -2134,15 +2143,19 @@ impl Doc {
 		use CodeTypeIn::*;
 		let is_in_svg = self
 			.check_special()
-			.map_or(false, |special| special == SpecialTag::Svg);
-		let current_node = self.current_node.borrow();
-		let meta = current_node.meta.as_ref().expect("").borrow();
-		let tag_name = &meta.name;
-		let lc_tag_name = tag_name
+			.map_or(false, |special| matches!(special, SpecialTag::Svg));
+		let lc_tag_name = self
+			.current_node
+			.borrow()
+			.meta
+			.as_ref()
+			.expect("")
+			.borrow()
+			.name
 			.iter()
 			.map(|ch| ch.to_ascii_lowercase())
 			.collect::<Vec<char>>();
-		if (is_in_svg && is_script_or_style(&lc_tag_name, &None))
+		if is_script_or_style(&lc_tag_name, &None)
 			|| (!is_in_svg && is_plain_text_tag(&lc_tag_name, &None))
 		{
 			// svg tags allow script and style tag, but title and textarea will treat as normal tag
@@ -2157,13 +2170,33 @@ impl Doc {
 			self.set_code_in(code_in);
 			// set detect chars
 			let mut next_chars = vec!['<', END_SLASH_CHAR];
-			next_chars.extend_from_slice(&tag_name);
+			next_chars.extend_from_slice(
+				&self
+					.current_node
+					.borrow()
+					.meta
+					.as_ref()
+					.expect("")
+					.borrow()
+					.name,
+			);
 			self.detect = Some(next_chars);
 		} else {
 			if self.in_special.is_none() {
 				// not void elements will check if special
 				self.in_special = if let Some(&special) = SPECIAL_TAG_MAP.get(&lc_tag_name) {
-					Some((special, tag_name.clone()))
+					Some((
+						special,
+						self
+							.current_node
+							.borrow()
+							.meta
+							.as_ref()
+							.expect("")
+							.borrow()
+							.name
+							.clone(),
+					))
 				} else {
 					None
 				}
