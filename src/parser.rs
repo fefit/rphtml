@@ -94,6 +94,11 @@ lazy_static! {
 	];
 }
 
+// gather previous characters
+fn chars_to_string(content: &[char]) -> String {
+	content.iter().collect::<String>()
+}
+
 // create parse error
 fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResult {
 	let err = ParseError::new(
@@ -104,9 +109,8 @@ fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResu
 }
 
 fn is_void_tag(name: &[char]) -> bool {
-	let case: Option<NameCase> = None;
 	for cur_name in VOID_ELEMENTS.iter() {
-		if is_equal_chars(&cur_name[..], name, &None) {
+		if is_equal_chars(&cur_name, name, &None) {
 			return true;
 		}
 	}
@@ -114,13 +118,11 @@ fn is_void_tag(name: &[char]) -> bool {
 }
 
 fn is_plain_text_tag(name: &[char], case: &Option<NameCase>) -> bool {
-	is_equal_chars(name, &TEXTAREA_TAG_NAME[..], case)
-		|| is_equal_chars(name, &TITLE_TAG_NAME[..], case)
+	is_equal_chars(name, &TEXTAREA_TAG_NAME, case) || is_equal_chars(name, &TITLE_TAG_NAME, case)
 }
 
 fn is_script_or_style(name: &[char], case: &Option<NameCase>) -> bool {
-	is_equal_chars(name, &STYLE_TAG_NAME[..], case)
-		|| is_equal_chars(name, &SCRIPT_TAG_NAME[..], case)
+	is_equal_chars(name, &STYLE_TAG_NAME, case) || is_equal_chars(name, &SCRIPT_TAG_NAME, case)
 }
 
 pub fn is_content_tag(name: &[char], case: &Option<NameCase>) -> bool {
@@ -210,19 +212,8 @@ fn get_content_encode(content: &[char]) -> Vec<char> {
 fn get_content_decode(content: &[char]) -> Vec<char> {
 	decode_chars(content)
 }
-// trim chars left whitespaces
-fn chars_trim_left(target: &[char]) -> &[char] {
-	let mut index: usize = 0;
-	for ch in target {
-		if !ch.is_ascii_whitespace() {
-			break;
-		}
-		index += 1;
-	}
-	&target[index..]
-}
 
-// trim chars right whitespaces
+// trim chars end whitespaces
 fn chars_trim_end(target: &[char]) -> &[char] {
 	let mut end_index: usize = target.len();
 	for ch in target.iter().rev() {
@@ -234,22 +225,9 @@ fn chars_trim_end(target: &[char]) -> &[char] {
 	&target[..end_index]
 }
 
-// trim chars  whitespaces
-fn chars_trim(target: &[char]) -> &[char] {
-	chars_trim_end(chars_trim_left(target))
-}
-
-// check if contains chars
-fn contains_chars(
-	target: &[char],
-	search: &[char],
-	case: &Option<NameCase>,
-	max_start_index: Option<usize>,
-) -> bool {
-	// check length
-	let t_len = target.len();
-	let s_len = search.len();
-	if t_len < s_len {
+// check if equal
+fn is_equal_chars(target: &[char], cmp: &[char], case: &Option<NameCase>) -> bool {
+	if target.len() != cmp.len() {
 		return false;
 	}
 	// check characters
@@ -261,31 +239,12 @@ fn contains_chars(
 	} else {
 		|a: &char, b: &char| -> bool { a == b }
 	};
-	let mut t_index: usize = 0;
-	let mut s_index: usize = 0;
-	let max_t_index: usize = max_start_index.unwrap_or(t_len - s_len);
-	loop {
-		for ch in target[t_index..].iter() {
-			if !is_equal(ch, &search[s_index]) {
-				break;
-			}
-			s_index += 1;
-		}
-		if s_index == s_len {
-			return true;
-		}
-		if t_index < max_t_index {
-			s_index = 0;
-			t_index += 1;
-		} else {
-			break;
+	for (index, ch) in target.iter().enumerate() {
+		if !is_equal(ch, &cmp[index]) {
+			return false;
 		}
 	}
-	false
-}
-// check if equal
-fn is_equal_chars(target: &[char], cmp: &[char], case: &Option<NameCase>) -> bool {
-	contains_chars(target, cmp, case, Some(0))
+	true
 }
 
 fn is_equal_chars_ignore_case(target: &[char], cmp: &[char]) -> (bool, bool) {
@@ -298,6 +257,7 @@ fn is_equal_chars_ignore_case(target: &[char], cmp: &[char]) -> (bool, bool) {
 		if cmp_ch == ch {
 			continue;
 		}
+		// test if totally same
 		is_total_same = false;
 		match cmp_ch {
 			'a'..='z' => {
@@ -344,7 +304,7 @@ impl Attr {
 		let mut ret = Vec::with_capacity(ALLOC_CHAR_CAPACITY);
 		let mut has_key = false;
 		if let Some(AttrData { content, .. }) = &self.key {
-			ret.extend_from_slice(&content[..]);
+			ret.extend_from_slice(&content);
 			has_key = true;
 		}
 		if let Some(AttrData { content, .. }) = &self.value {
@@ -354,12 +314,12 @@ impl Attr {
 			if let Some(quote) = self.quote {
 				if self.need_quote || !remove_quote {
 					ret.push(quote);
-					ret.extend_from_slice(&content[..]);
+					ret.extend_from_slice(&content);
 					ret.push(quote);
 					return ret;
 				}
 			}
-			ret.extend_from_slice(&content[..]);
+			ret.extend_from_slice(&content);
 		}
 		ret
 	}
@@ -372,7 +332,7 @@ impl Attr {
 		if let Some(key) = &self.key {
 			if is_equal_chars(&key.content, &['i', 'd'], &Some(NameCase::Lower)) {
 				if let Some(value) = &self.value {
-					return Some(value.content.iter().collect::<String>());
+					return Some(chars_to_string(&value.content));
 				}
 			}
 		}
@@ -631,12 +591,12 @@ impl Node {
 				let tag_name = &meta.name;
 				// check if is in pre, only check if not in pre
 				status.is_in_pre =
-					is_in_pre || is_equal_chars(&tag_name[..], &PRE_TAG_NAME[..], &Some(NameCase::Lower));
+					is_in_pre || is_equal_chars(&tag_name, &PRE_TAG_NAME, &Some(NameCase::Lower));
 				if !is_inner {
 					// add tag name
 					result.push('<');
 					if !options.lowercase_tagname {
-						result.extend_from_slice(&tag_name[..]);
+						result.extend_from_slice(&tag_name);
 					} else {
 						for ch in tag_name {
 							result.push(ch.to_ascii_lowercase());
@@ -645,7 +605,7 @@ impl Node {
 					// add attrs
 					if !meta.attrs.is_empty() {
 						let attrs = meta.attrs_to_string(options.remove_attr_quote);
-						result.extend_from_slice(&attrs[..]);
+						result.extend_from_slice(&attrs);
 					}
 					// add self closing
 					if meta.self_closed || (meta.auto_fix && options.always_close_void) {
@@ -684,7 +644,7 @@ impl Node {
 				if !is_inner {
 					result.extend_from_slice(&['<', '/']);
 					if options.remove_endtag_space {
-						content = chars_trim_end(&content[..]);
+						content = chars_trim_end(&content);
 					}
 					if options.lowercase_tagname {
 						let content = content
@@ -901,7 +861,7 @@ impl SpecialTag {
 					_ => {
 						let message = format!(
 							"the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
-							tag_name.iter().collect::<String>(),
+							chars_to_string(&tag_name),
 							code_in,
 							position
 						);
@@ -1073,7 +1033,7 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 							// wrong self closing tag
 							if !meta.borrow().is_void {
 								return doc.error(
-									ErrorKind::WrongSelfClosing(meta.borrow().name.iter().collect::<String>()),
+									ErrorKind::WrongSelfClosing(chars_to_string(&meta.borrow().name)),
 									context,
 								);
 							}
@@ -1285,7 +1245,8 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 						.borrow();
 					let start_tag_name = &meta.name;
 					let (is_equal, is_total_same) =
-						is_equal_chars_ignore_case(&start_tag_name, &end_tag_name);
+						is_equal_chars_ignore_case(&start_tag_name, &fix_end_tag_name);
+
 					if is_equal {
 						if doc.parse_options.case_sensitive_tagname && !is_total_same {
 							return doc.error(
@@ -1484,8 +1445,8 @@ fn parse_unkown_tag(doc: &mut Doc, c: char, context: &str) -> HResult {
 			let inner_node = Node::new(NodeType::Tag, doc.mem_position);
 			let node = Rc::new(RefCell::new(inner_node));
 			doc.add_new_node(node);
-			doc.set_text_spaces_between();
 			doc.set_code_in(Tag);
+			doc.set_text_spaces_between();
 			doc.prev_chars.push(c);
 		}
 		END_SLASH_CHAR => {
@@ -1504,6 +1465,7 @@ fn parse_unkown_tag(doc: &mut Doc, c: char, context: &str) -> HResult {
 				))));
 				doc.current_node.borrow_mut().prev = Some(prev_node);
 			}
+			// set code in first
 			doc.set_code_in(TagEnd);
 		}
 		'!' => {
@@ -1578,7 +1540,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				}
 			} else {
 				return create_parse_error(
-					ErrorKind::UnrecognizedTag(doc.chars_to_string(), next_chars.iter().collect::<String>()),
+					ErrorKind::UnrecognizedTag(doc.chars_to_string(), chars_to_string(&next_chars)),
 					doc.mem_position,
 					context,
 				);
@@ -1759,17 +1721,11 @@ impl Doc {
 		Ok(doc.into_root())
 	}
 
-	// gather previous characters
+	// chars to string
 	fn chars_to_string(&self) -> String {
-		self.prev_chars.iter().collect::<String>()
+		chars_to_string(&self.prev_chars)
 	}
 
-	// clean chars to string
-	fn clean_chars_to_string(&mut self) -> String {
-		let content = self.prev_chars.iter().collect::<String>();
-		self.prev_chars.clear();
-		content
-	}
 	// clean the previous characters and return
 	fn clean_chars_to_vec(&mut self) -> Vec<char> {
 		let mut content: Vec<char> = Vec::with_capacity(self.prev_chars.len());
@@ -1992,18 +1948,19 @@ impl Doc {
 			if !self.parse_options.auto_fix_unclosed_tag {
 				let last_node = self.chain_nodes[cur_depth - 1].borrow();
 				let begin_at = last_node.begin_at;
-				let name = last_node
-					.meta
-					.as_ref()
-					.expect("tag node's meta must have")
-					.borrow()
-					.name
-					.iter()
-					.collect::<String>();
-				return create_parse_error(ErrorKind::UnclosedTag(name), begin_at, context);
+				let tag_name = chars_to_string(
+					&last_node
+						.meta
+						.as_ref()
+						.expect("tag node's meta must have")
+						.borrow()
+						.name,
+				);
+				return create_parse_error(ErrorKind::UnclosedTag(tag_name), begin_at, context);
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
+
 			self.fix_unclosed_tag(&unclosed);
 		}
 		// check and fix last node info.
@@ -2218,24 +2175,12 @@ pub struct DocHolder {
 impl DocHolder {
 	// render
 	pub fn render(&self, options: &RenderOptions) -> String {
-		self
-			.borrow()
-			.root
-			.borrow()
-			.build(options, false)
-			.iter()
-			.collect::<String>()
+		chars_to_string(&self.borrow().root.borrow().build(options, false))
 	}
 
 	// render text
 	pub fn render_text(&self, options: &RenderOptions) -> String {
-		self
-			.borrow()
-			.root
-			.borrow()
-			.build(options, true)
-			.iter()
-			.collect::<String>()
+		chars_to_string(&self.borrow().root.borrow().build(options, true))
 	}
 
 	// borrow
