@@ -2,7 +2,7 @@ use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
 use crate::position::{CodeAt, CodeRegion};
 use crate::types::{GenResult, HResult};
-use htmlentity::entity::{decode_chars, encode, EncodeType, EntitySet};
+use htmlentity::entity::{decode_chars, encode_chars, EncodeType, EntitySet};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::error::Error;
@@ -206,7 +206,7 @@ pub enum CodeTypeIn {
 }
 
 fn get_content_encode(content: &[char]) -> Vec<char> {
-	encode(&content, &EntitySet::Html, &EncodeType::Named)
+	encode_chars(content, EntitySet::Html, EncodeType::Named)
 }
 
 fn get_content_decode(content: &[char]) -> Vec<char> {
@@ -514,8 +514,15 @@ impl Node {
 			..Default::default()
 		}
 	}
-	pub fn create_text_node(content: &str, code_at: Option<CodeAt>) -> Self {
-		let node_type = if content.trim().is_empty() {
+	pub fn create_text_node(content: Vec<char>, code_at: Option<CodeAt>) -> Self {
+		let mut is_all_spaces = true;
+		for ch in &content {
+			if !ch.is_ascii_whitespace() {
+				is_all_spaces = false;
+				break;
+			}
+		}
+		let node_type = if is_all_spaces {
 			NodeType::SpacesBetweenTag
 		} else {
 			NodeType::Text
@@ -525,7 +532,7 @@ impl Node {
 			node_type,
 			begin_at: code_at,
 			end_at: code_at,
-			content: Some(content.chars().collect::<Vec<char>>()),
+			content: Some(content),
 			..Default::default()
 		}
 	}
@@ -1801,6 +1808,7 @@ impl Doc {
 			// add cur node to parent's child nodes
 			if let Some(childs) = &mut parent_node.childs {
 				child.borrow_mut().index = childs.len();
+
 				childs.push(child);
 			} else {
 				child.borrow_mut().index = 0;

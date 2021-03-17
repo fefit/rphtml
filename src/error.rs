@@ -1,5 +1,4 @@
-use crate::position::{CodeAt, CodeRegion};
-use crate::types::HResult;
+use crate::position::CodeRegion;
 use std::error::Error;
 use std::fmt;
 use thiserror::Error;
