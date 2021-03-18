@@ -209,10 +209,6 @@ fn get_content_encode(content: &[char]) -> Vec<char> {
 	encode_chars(content, EntitySet::Html, EncodeType::Named)
 }
 
-fn get_content_decode(content: &[char]) -> Vec<char> {
-	decode_chars(content)
-}
-
 // trim chars end whitespaces
 fn chars_trim_end(target: &[char]) -> &[char] {
 	let mut end_index: usize = target.len();
@@ -537,56 +533,103 @@ impl Node {
 		}
 	}
 	// build node
-	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus) -> Vec<char> {
-		let mut result: Vec<char> = Vec::with_capacity(50);
+	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus, result: &mut Vec<char>) {
 		let is_in_pre = status.is_in_pre;
-		let inner_type = status.inner_type.as_ref();
-		let is_inner = inner_type.is_some();
+		let is_inner = status.inner_type.is_some();
 		use NodeType::*;
 		match self.node_type {
 			Text => {
+				// original content
+				let content = self
+					.content
+					.as_ref()
+					.expect("Text node's conetnt must not empty");
 				// check if need decode
-				let mut content: Vec<char> = Vec::with_capacity(5);
-				let last_content = if !is_in_pre && options.minify_spaces {
+				if !is_in_pre && options.minify_spaces {
 					// just keep one space
 					let mut prev_is_space = false;
-					for &c in self.content.as_ref().unwrap().iter() {
-						if c.is_ascii_whitespace() {
-							if prev_is_space {
-								continue;
+					if options.decode_entity {
+						let mut entity: Vec<char> = Vec::with_capacity(10);
+						let mut is_in_entity = false;
+						for &ch in content {
+							if !is_in_entity {
+								if ch == '&' {
+									entity.push(ch);
+									is_in_entity = true;
+								} else {
+									// judge if whitespace
+									if ch.is_ascii_whitespace() {
+										if prev_is_space {
+											continue;
+										}
+										prev_is_space = true;
+										result.push(ch);
+									} else {
+										result.push(ch);
+									}
+								}
+							} else {
+								entity.push(ch);
+								// in entity
+								if ch == ';' {
+									// entity end
+									result.extend(decode_chars(&entity));
+									is_in_entity = false;
+									entity = Vec::with_capacity(10);
+								}
 							}
-							prev_is_space = true;
-							content.push(c);
-						} else {
-							prev_is_space = false;
-							content.push(c);
+						}
+						// has suffix wrong entity
+						if is_in_entity {
+							result.extend(entity);
+						}
+					} else {
+						// just add one space when meet repeated whitespaces
+						for &c in content {
+							if c.is_ascii_whitespace() {
+								if prev_is_space {
+									continue;
+								}
+								prev_is_space = true;
+								result.push(c);
+							} else {
+								prev_is_space = false;
+								result.push(c);
+							}
 						}
 					}
-					&content
 				} else {
-					// original content
-					self
-						.content
-						.as_ref()
-						.expect("Text node's conetnt must not empty")
-				};
-				// when need decode, the content should append to result
-				if options.decode_entity {
-					let decode_content = get_content_decode(&last_content);
-					result.extend(decode_content);
-				} else {
-					result.extend_from_slice(&last_content);
-				}
-			}
-			SpacesBetweenTag => {
-				if !is_in_pre && options.minify_spaces {
-					// do nothing
-				} else {
-					let content = self
-						.content
-						.as_ref()
-						.expect("Spaces between node must have whitespcaes");
-					result.extend_from_slice(&content);
+					// decode entity
+					if options.decode_entity {
+						// when need decode, the content should append to result
+						let mut entity: Vec<char> = Vec::with_capacity(10);
+						let mut is_in_entity = false;
+						for &ch in content {
+							if !is_in_entity {
+								if ch == '&' {
+									entity.push(ch);
+									is_in_entity = true;
+								} else {
+									result.push(ch);
+								}
+							} else {
+								entity.push(ch);
+								// in entity
+								if ch == ';' {
+									// entity end
+									result.extend(decode_chars(&entity));
+									is_in_entity = false;
+									entity = Vec::with_capacity(10);
+								}
+							}
+						}
+						// has suffix wrong entity
+						if is_in_entity {
+							result.extend(entity);
+						}
+					} else {
+						result.extend_from_slice(&content);
+					}
 				}
 			}
 			Tag => {
@@ -665,6 +708,17 @@ impl Node {
 					result.push('>');
 				}
 			}
+			SpacesBetweenTag => {
+				if !is_in_pre && options.minify_spaces {
+					// do nothing
+				} else {
+					let content = self
+						.content
+						.as_ref()
+						.expect("Spaces between node must have whitespcaes");
+					result.extend_from_slice(&content);
+				}
+			}
 			HTMLDOCTYPE => {
 				let meta = self
 					.meta
@@ -698,30 +752,28 @@ impl Node {
 			}
 			_ => {}
 		}
-		result
 	}
 	// build node tree
-	fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus) -> Vec<char> {
-		let mut result: Vec<Vec<char>> = Vec::with_capacity(50);
-		let content = self.build_node(options, status);
-		result.push(content);
+	fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus, result: &mut Vec<char>) {
+		self.build_node(options, status, result);
 		if let Some(childs) = &self.childs {
-			for child in childs {
+			if let Some(RenderStatuInnerType::Html) = status.inner_type {
+				// get inner html
 				let mut sub_status = status.clone();
-				if let Some(RenderStatuInnerType::Html) = sub_status.inner_type {
-					// get inner html
-					sub_status.inner_type = None;
+				sub_status.inner_type = None;
+				for child in childs {
+					child.borrow().build_tree(options, &mut sub_status, result);
 				}
-				let child = child.borrow();
-				let content = child.build_tree(options, &mut sub_status);
-				result.push(content);
+			} else {
+				for child in childs {
+					// keep the original inner type
+					child.borrow().build_tree(options, status, result);
+				}
 			}
 		}
 		if let Some(end_tag) = &self.end_tag {
-			let content = end_tag.borrow().build_node(options, status);
-			result.push(content);
+			end_tag.borrow().build_node(options, status, result);
 		}
-		result.into_iter().flatten().collect::<Vec<char>>()
 	}
 	// build
 	pub fn build(&self, options: &RenderOptions, inner_text: bool) -> Vec<char> {
@@ -746,9 +798,10 @@ impl Node {
 			inner_type,
 			..Default::default()
 		};
+		let mut result: Vec<char> = Vec::with_capacity(50);
 		// inner_html or inner_text
 		if status.inner_type.is_some() {
-			if self.node_type == NodeType::AbstractRoot {
+			if matches!(self.node_type, NodeType::AbstractRoot) {
 				// inner html for abstract root
 				if let Some(childs) = &self.childs {
 					let mut finded = false;
@@ -756,16 +809,15 @@ impl Node {
 					for child in childs {
 						if child.borrow().node_type == NodeType::Tag {
 							if finded {
-								panic!(
-								"`inner_html` can't used in abstract root node which has multiple tag node childs."
-							);
+								panic!("`inner_html` can't used in abstract root node which has multiple tag node childs.");
 							}
 							child_node = Some(Rc::clone(&child));
 							finded = true;
 						}
 					}
 					if let Some(child_node) = child_node {
-						return child_node.borrow().build_tree(options, status);
+						child_node.borrow().build_tree(options, status, &mut result);
+						return result;
 					}
 					// no tag child node finded
 					throw_wrong_node(&childs[childs.len() - 1].borrow().node_type);
@@ -777,7 +829,8 @@ impl Node {
 				throw_wrong_node(&self.node_type);
 			}
 		}
-		self.build_tree(options, status)
+		self.build_tree(options, status, &mut result);
+		result
 	}
 
 	// append a child
