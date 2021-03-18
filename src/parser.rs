@@ -2,7 +2,7 @@ use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
 use crate::position::{CodeAt, CodeRegion};
 use crate::types::{GenResult, HResult};
-use htmlentity::entity::{decode_chars, encode_chars, EncodeType, EntitySet};
+use htmlentity::entity::{decode_chars, encode_chars, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::error::Error;
@@ -602,30 +602,30 @@ impl Node {
 					// decode entity
 					if options.decode_entity {
 						// when need decode, the content should append to result
-						let mut entity: Vec<char> = Vec::with_capacity(10);
+						let mut entity: Entity = Entity::new();
 						let mut is_in_entity = false;
 						for &ch in content {
 							if !is_in_entity {
 								if ch == '&' {
-									entity.push(ch);
+									entity.add(ch);
 									is_in_entity = true;
 								} else {
 									result.push(ch);
 								}
 							} else {
-								entity.push(ch);
+								entity.add(ch);
 								// in entity
 								if ch == ';' {
 									// entity end
-									result.extend(decode_chars(&entity));
+									result.extend(entity.get_chars());
 									is_in_entity = false;
-									entity = Vec::with_capacity(10);
+									entity = Entity::new();
 								}
 							}
 						}
 						// has suffix wrong entity
 						if is_in_entity {
-							result.extend(entity);
+							result.extend(entity.get_chars());
 						}
 					} else {
 						result.extend_from_slice(&content);
