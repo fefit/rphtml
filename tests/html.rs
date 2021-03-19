@@ -712,6 +712,45 @@ fn test_eof() -> HResult {
 }
 
 #[test]
+fn test_decode() -> HResult {
+	let texts = "This  is  a  &gt;";
+	let doc = parse(&format!("<div>{}</div>", texts))?;
+	let decode_texts = doc.render_text(&RenderOptions {
+		decode_entity: true,
+		..Default::default()
+	});
+	assert_eq!(decode_texts, "This  is  a  >");
+	// with spaces
+	let texts = "This  is a &gt;";
+	let doc = parse(&format!("<div>{}</div>", texts))?;
+	let decode_texts = doc.render_text(&RenderOptions {
+		decode_entity: true,
+		minify_spaces: true,
+		..Default::default()
+	});
+	assert_eq!(decode_texts, "This is a >");
+	// wrong entity
+	let texts = "This  is  a &gt";
+	let doc = parse(&format!("<div>{}</div>", texts))?;
+	let decode_texts = doc.render_text(&RenderOptions {
+		decode_entity: true,
+		minify_spaces: true,
+		..Default::default()
+	});
+	assert_eq!(decode_texts, "This is a &gt");
+	// wrong entity
+	let texts = "This   is   a   &";
+	let doc = parse(&format!("<div>{}</div>", texts))?;
+	let decode_texts = doc.render_text(&RenderOptions {
+		decode_entity: true,
+		minify_spaces: true,
+		..Default::default()
+	});
+	assert_eq!(decode_texts, "This is a &");
+	Ok(())
+}
+
+#[test]
 fn test_parse_file() {
 	let doc = Doc::parse_file("./cases/full.html", Default::default());
 	assert!(doc.is_ok());

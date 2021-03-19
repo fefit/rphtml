@@ -2,7 +2,7 @@ use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
 use crate::position::{CodeAt, CodeRegion};
 use crate::types::{GenResult, HResult};
-use htmlentity::entity::{decode_chars, encode_chars, EncodeType, Entity, EntitySet};
+use htmlentity::entity::{decode_chars_to, encode_chars, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::error::Error;
@@ -549,13 +549,13 @@ impl Node {
 					// just keep one space
 					let mut prev_is_space = false;
 					if options.decode_entity {
-						let mut entity: Vec<char> = Vec::with_capacity(10);
+						let mut start_index: usize = 0;
 						let mut is_in_entity = false;
-						for &ch in content {
+						for (index, ch) in content.iter().enumerate() {
 							if !is_in_entity {
-								if ch == '&' {
-									entity.push(ch);
+								if ch == &'&' {
 									is_in_entity = true;
+									start_index = index;
 								} else {
 									// judge if whitespace
 									if ch.is_ascii_whitespace() {
@@ -563,25 +563,28 @@ impl Node {
 											continue;
 										}
 										prev_is_space = true;
-										result.push(ch);
+										result.push(*ch);
 									} else {
-										result.push(ch);
+										prev_is_space = false;
+										result.push(*ch);
 									}
 								}
-							} else {
-								entity.push(ch);
-								// in entity
-								if ch == ';' {
-									// entity end
-									result.extend(decode_chars(&entity));
-									is_in_entity = false;
-									entity = Vec::with_capacity(10);
+							} else if ch == &';' {
+								// entity end
+								let entity = &content[start_index + 1..index];
+								if let Some(decoded) = Entity::decode(entity) {
+									result.push(decoded);
+								} else {
+									result.push('&');
+									result.extend_from_slice(entity);
+									result.push(';');
 								}
+								is_in_entity = false;
 							}
 						}
 						// has suffix wrong entity
 						if is_in_entity {
-							result.extend(entity);
+							result.extend(&content[start_index..]);
 						}
 					} else {
 						// just add one space when meet repeated whitespaces
@@ -602,31 +605,7 @@ impl Node {
 					// decode entity
 					if options.decode_entity {
 						// when need decode, the content should append to result
-						let mut entity: Entity = Entity::new();
-						let mut is_in_entity = false;
-						for &ch in content {
-							if !is_in_entity {
-								if ch == '&' {
-									entity.add(ch);
-									is_in_entity = true;
-								} else {
-									result.push(ch);
-								}
-							} else {
-								entity.add(ch);
-								// in entity
-								if ch == ';' {
-									// entity end
-									result.extend(entity.get_chars());
-									is_in_entity = false;
-									entity = Entity::new();
-								}
-							}
-						}
-						// has suffix wrong entity
-						if is_in_entity {
-							result.extend(entity.get_chars());
-						}
+						decode_chars_to(&content, result);
 					} else {
 						result.extend_from_slice(&content);
 					}
