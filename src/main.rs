@@ -4957,30 +4957,24 @@ fn main() -> Result<(), Box<dyn Error>> {
 <!--b296c95a3D9-->
 
   "##;
-	let code: String = format!(
-		r##"
-	    <ul>{}</ul>
-	  "##,
-		String::from("<li></li><li>abcdefghijklmnopqrstuvwxyz&amp;abcdefghijklmnopqrstuvwxy</li>")
-			.repeat(3000 / 2)
-	);
 	let start_time = SystemTime::now();
-	let total = 200;
-	let doc = Doc::parse(
-		&code,
-		ParseOptions {
-			auto_fix_unexpected_endtag: true,
-			allow_self_closing: true,
-			auto_fix_unclosed_tag: true,
-			auto_fix_unescaped_lt: true,
-			..Default::default()
-		},
-	)?;
+	let total = 500;
+
 	for _ in 0..total {
-		let content = doc.render_text(&RenderOptions {
-			decode_entity: true,
-			..Default::default()
-		});
+		let doc = Doc::parse(
+			&code,
+			ParseOptions {
+				auto_fix_unexpected_endtag: true,
+				allow_self_closing: true,
+				auto_fix_unclosed_tag: true,
+				auto_fix_unescaped_lt: true,
+				..Default::default()
+			},
+		)?;
+		// let content = doc.render_text(&RenderOptions {
+		// 	decode_entity: true,
+		// 	..Default::default()
+		// });
 		// println!("{:?}", content);
 		// println!("doc:{}", doc.render(&Default::default()));
 	}

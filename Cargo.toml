@@ -1,6 +1,6 @@
 [package]
 name = "rphtml"
-version = "0.5.2"
+version = "0.5.3"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
@@ -23,11 +23,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 criterion = "0.3"
-wasm-bindgen-test = "0.3.18"
 
 [[bench]]
 name = "benchmark"
 harness = false
 
 [profile.release]
-debug = true
+debug = false

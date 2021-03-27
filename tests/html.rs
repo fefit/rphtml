@@ -251,9 +251,9 @@ fn test_svg_tag() -> HResult {
 	let code = r#"<svg version="1.1" baseProfile="full" width="300" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="red" /><text x="250" y="150" font-family="Verdana" font-size="55"><![CDATA[<div> is something]]></text></svg>"#;
 	let doc = parse(code)?;
 	assert_eq!(render(&doc), code);
-	// wrong svg sub nodes, such as text and other no tag nodes
+	// svg tag
 	let code = r##"<svg>abc</svg>"##;
-	assert!(parse(code).is_err());
+	assert!(parse(code).is_ok());
 	// svg allow style,script
 	let code = r##"<svg><style></style><script></script></svg>"##;
 	let doc = parse(code)?;
@@ -266,12 +266,12 @@ fn test_mathml_tag() -> HResult {
 	let code = r#"<math><mrow></mrow></math>"#;
 	let doc = parse(code)?;
 	assert_eq!(render(&doc), code);
-	// wrong math nodes, the same as svg tag
+	// mathml text node
 	let code = r##"<math>abc</math>"##;
-	assert!(parse(code).is_err());
-	// math also can't has style or script tag
+	assert!(parse(code).is_ok());
+	// style in mathml
 	let code = r##"<math><style></style></math>"##;
-	assert!(parse(code).is_err());
+	assert!(parse(code).is_ok());
 	Ok(())
 }
 

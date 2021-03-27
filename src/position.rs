@@ -2,31 +2,6 @@ use std::fmt;
 /**
  * the doc's position
 */
-#[derive(Default, Clone, Copy, PartialEq, Debug)]
-pub struct CodeAt {
-	pub index: usize,
-}
-
-impl CodeAt {
-	// new
-	pub fn new(index: usize) -> Self {
-		CodeAt { index }
-	}
-	// create a begin position
-	pub fn begin() -> Self {
-		CodeAt::new(0)
-	}
-	// move to next col
-	pub fn move_one(&mut self) {
-		self.index += 1;
-	}
-	// get the next col position
-	pub fn next_col(&self) -> Self {
-		CodeAt {
-			index: self.index + 1,
-		}
-	}
-}
 #[derive(Debug)]
 pub struct CodeRegion {
 	index: usize,

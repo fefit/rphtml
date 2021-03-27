@@ -1,6 +1,7 @@
+#![allow(clippy::unnecessary_wraps)]
 use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
-use crate::position::{CodeAt, CodeRegion};
+use crate::position::CodeRegion;
 use crate::types::{GenResult, HResult};
 use htmlentity::entity::{decode_chars_to, encode_chars, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
@@ -31,7 +32,7 @@ const EOF_CHAR: char = '\0';
 const DASH_CHAR: char = '-';
 const LEFT_BRACKET_CHAR: char = '[';
 const RIGHT_BRACKET_CHAR: char = ']';
-const ALLOC_CHAR_CAPACITY: usize = 50;
+const ALLOC_CHAR_CAPACITY: usize = 200;
 const ALLOC_NODES_CAPACITY: usize = 20;
 // tagname's characters
 const HTML_TAG_NAME: [char; 4] = ['h', 't', 'm', 'l'];
@@ -100,11 +101,8 @@ fn chars_to_string(content: &[char]) -> String {
 }
 
 // create parse error
-fn create_parse_error(kind: ErrorKind, position: CodeAt, context: &str) -> HResult {
-	let err = ParseError::new(
-		kind,
-		CodeRegion::from_context_index(context, position.index),
-	);
+fn create_parse_error(kind: ErrorKind, position: usize, context: &str) -> HResult {
+	let err = ParseError::new(kind, CodeRegion::from_context_index(context, position));
 	Err(err)
 }
 
@@ -130,35 +128,21 @@ pub fn is_content_tag(name: &[char], case: &Option<NameCase>) -> bool {
 }
 
 pub fn allow_insert(name: &[char], node_type: NodeType) -> bool {
-	if is_void_tag(name) {
+	let lc_name = name
+		.iter()
+		.map(|ch| ch.to_ascii_lowercase())
+		.collect::<Vec<char>>();
+	// VOID TAGS
+	if is_void_tag(&lc_name) {
 		return false;
 	}
-	let case: Option<NameCase> = None;
-	use NodeType::*;
-	if let Some(special) = SPECIAL_TAG_MAP.get(name) {
-		let code_in = match node_type {
-			AbstractRoot => CodeTypeIn::AbstractRoot,
-			HTMLDOCTYPE => CodeTypeIn::HTMLDOCTYPE,
-			Comment => CodeTypeIn::Comment,
-			Text | SpacesBetweenTag => CodeTypeIn::TextNode,
-			TagEnd => CodeTypeIn::TagEnd,
-			XMLCDATA => CodeTypeIn::XMLCDATA,
-			Tag => {
-				if is_equal_chars(name, &SCRIPT_TAG_NAME, &case) {
-					CodeTypeIn::HTMLScript
-				} else if is_equal_chars(name, &STYLE_TAG_NAME, &case) {
-					CodeTypeIn::HTMLStyle
-				} else {
-					CodeTypeIn::Tag
-				}
-			}
-		};
-		return special
-			.is_ok(&code_in, name, &EMPTY_CHAR, &CodeAt::default(), "")
-			.is_ok();
-	}
+	// TITLE/TEXTAREA
 	if is_plain_text_tag(name, &None) {
-		return node_type == Text || node_type == SpacesBetweenTag;
+		return node_type == NodeType::Text || node_type == NodeType::SpacesBetweenTag;
+	}
+	// XMLCDATA
+	if node_type == NodeType::XMLCDATA {
+		return SPECIAL_TAG_MAP.get(&lc_name).is_some();
 	}
 	true
 }
@@ -448,10 +432,10 @@ pub struct Node {
 	pub node_type: NodeType,
 
 	// the node's start position '<'
-	pub begin_at: CodeAt,
+	pub begin_at: usize,
 
 	// the node's end position '>'
-	pub end_at: CodeAt,
+	pub end_at: usize,
 
 	// the end tag </xx> of the tag node
 	pub end_tag: Option<RefNode>,
@@ -476,9 +460,6 @@ pub struct Node {
 
 	// the tag node meta information
 	pub meta: Option<RefCell<TagMeta>>,
-
-	// special information
-	pub special: Option<SpecialTag>,
 }
 
 impl fmt::Debug for Node {
@@ -491,7 +472,6 @@ impl fmt::Debug for Node {
 			.field("content", &self.content)
 			.field("childs", &self.childs)
 			.field("meta", &self.meta)
-			.field("special", &self.special)
 			.field("end_tag", &self.end_tag)
 			.field("parent", &self.parent.is_some())
 			.field("root", &self.root.is_some())
@@ -502,7 +482,7 @@ impl fmt::Debug for Node {
 
 impl Node {
 	// create a new node
-	pub fn new(node_type: NodeType, code_at: CodeAt) -> Self {
+	pub fn new(node_type: NodeType, code_at: usize) -> Self {
 		Node {
 			node_type,
 			begin_at: code_at,
@@ -510,7 +490,7 @@ impl Node {
 			..Default::default()
 		}
 	}
-	pub fn create_text_node(content: Vec<char>, code_at: Option<CodeAt>) -> Self {
+	pub fn create_text_node(content: Vec<char>, code_at: Option<usize>) -> Self {
 		let mut is_all_spaces = true;
 		for ch in &content {
 			if !ch.is_ascii_whitespace() {
@@ -871,47 +851,6 @@ impl Node {
 pub enum SpecialTag {
 	MathML,
 	Svg,
-	Template,
-}
-
-impl SpecialTag {
-	pub fn is_ok(
-		&self,
-		code_in: &CodeTypeIn,
-		tag_name: &[char],
-		c: &char,
-		position: &CodeAt,
-		context: &str,
-	) -> HResult {
-		use CodeTypeIn::*;
-		use SpecialTag::*;
-		match code_in {
-			Unkown | UnkownTag | TagEnd | ExclamationBegin | Comment => {
-				return Ok(());
-			}
-			_ => {}
-		};
-		match self {
-			Svg | MathML => {
-				match code_in {
-					Tag | XMLCDATA => {}
-					HTMLScript | HTMLStyle if self == &Svg => {}
-					TextNode if c.is_ascii_whitespace() => {}
-					_ => {
-						let message = format!(
-							"the tag '{}' can only contains sub tags, find node '{:?}' at {:?}",
-							chars_to_string(&tag_name),
-							code_in,
-							position
-						);
-						return create_parse_error(ErrorKind::CommonError(message), *position, context);
-					}
-				};
-			}
-			Template => {}
-		};
-		Ok(())
-	}
 }
 
 type NextHandle = fn(&mut Doc, char, &str) -> HResult;
@@ -1064,19 +1003,11 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 				if !doc.parse_options.allow_self_closing {
 					// void elements or self closing element
 					// sub element in Svg or MathML allow self-closing
-					match doc.check_special() {
-						Some(SpecialTag::Svg) | Some(SpecialTag::MathML) => {
-							// is in svg or mathml
-						}
-						_ => {
-							// wrong self closing tag
-							if !meta.borrow().is_void {
-								return doc.error(
-									ErrorKind::WrongSelfClosing(chars_to_string(&meta.borrow().name)),
-									context,
-								);
-							}
-						}
+					if !(meta.borrow().is_void || doc.in_special.is_some()) {
+						return doc.error(
+							ErrorKind::WrongSelfClosing(chars_to_string(&meta.borrow().name)),
+							context,
+						);
 					}
 				}
 				meta.borrow_mut().self_closed = true;
@@ -1144,7 +1075,7 @@ fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 				doc.chain_nodes.pop();
 				doc.set_code_in(CodeTypeIn::Unkown);
 			} else {
-				// need check the tag if special tags
+				// need check the tag if content tags or other normal tags
 				doc.check_tag_type_do();
 			}
 		}
@@ -1285,7 +1216,6 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 					let start_tag_name = &meta.name;
 					let (is_equal, is_total_same) =
 						is_equal_chars_ignore_case(&start_tag_name, &fix_end_tag_name);
-
 					if is_equal {
 						if doc.parse_options.case_sensitive_tagname && !is_total_same {
 							return doc.error(
@@ -1320,7 +1250,7 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 				doc.set_code_in(Unkown);
 				// end of special tag
 				if doc.in_special.is_some()
-					&& is_equal_chars_ignore_case(&doc.in_special.as_ref().unwrap().1, fix_end_tag_name).0
+					&& is_equal_chars(&doc.in_special.as_ref().unwrap().1, fix_end_tag_name, &None)
 				{
 					doc.in_special = None;
 				}
@@ -1362,82 +1292,85 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 /**
  * code_in: HTMLScript | HTMLStyle | EscapeableRawText
  */
-fn parse_special_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
+fn parse_content_tag(doc: &mut Doc, c: char, _: &str) -> HResult {
 	use CodeTypeIn::*;
 	// parse html script tag and style tag
-	if c == TAG_END_CHAR {
-		let end_tag = doc
-			.detect
-			.as_ref()
-			.expect("detect chars must set before set_code_in.");
-		let mut detect_len = end_tag.len();
+	if c != TAG_END_CHAR {
+		// not end yet, just add character
+		doc.prev_chars.push(c);
+		return Ok(());
+	}
+	let end_tag = doc
+		.detect
+		.as_ref()
+		.expect("detect chars must set before set_code_in.");
+	let mut detect_len = end_tag.len();
+	let mut prev_len = doc.prev_chars.len();
+	if prev_len >= detect_len {
 		let prev_chars = &doc.prev_chars;
-		let mut prev_len = doc.prev_chars.len();
+		// remove suffix whitespaces
+		while prev_len > 0 {
+			let cur_index = prev_len - 1;
+			let prev_char = prev_chars[cur_index];
+			if !prev_char.is_ascii_whitespace() {
+				break;
+			} else {
+				prev_len = cur_index;
+			}
+		}
+		// check if need detect again
 		if prev_len >= detect_len {
-			// remove suffix whitespaces
-			while prev_len > 0 {
-				let cur_index = prev_len - 1;
-				let prev_char = prev_chars[cur_index];
-				if !prev_char.is_ascii_whitespace() {
-					break;
+			let case_sensitive = doc.parse_options.case_sensitive_tagname;
+			while detect_len > 0 {
+				let detect_index = detect_len - 1;
+				let detect_char = end_tag[detect_index];
+				let prev_index = prev_len - 1;
+				let prev_char = prev_chars[prev_index];
+				let is_matched = if detect_char == prev_char {
+					true
 				} else {
-					prev_len = cur_index;
-				}
-			}
-			// check if need detect again
-			if prev_len >= detect_len {
-				let case_sensitive = doc.parse_options.case_sensitive_tagname;
-				while detect_len > 0 {
-					let detect_index = detect_len - 1;
-					let detect_char = end_tag[detect_index];
-					let prev_index = prev_len - 1;
-					let prev_char = prev_chars[prev_index];
-					let is_matched = if detect_char == prev_char {
-						true
+					// check if case sensitive
+					if case_sensitive {
+						false
 					} else {
-						// check if case sensitive
-						if case_sensitive {
-							false
-						} else {
-							match detect_char {
-								'A'..='Z' => detect_char.to_ascii_lowercase() == prev_char,
-								'a'..='z' => detect_char.to_ascii_uppercase() == prev_char,
-								_ => false,
-							}
+						match detect_char {
+							'A'..='Z' => detect_char.to_ascii_lowercase() == prev_char,
+							'a'..='z' => detect_char.to_ascii_uppercase() == prev_char,
+							_ => false,
 						}
-					};
-					if is_matched {
-						// move forward detect
-						detect_len = detect_index;
-						// move forward prev chars
-						prev_len = prev_index;
-					} else {
-						break;
 					}
+				};
+				if is_matched {
+					// move forward detect
+					detect_len = detect_index;
+					// move forward prev chars
+					prev_len = prev_index;
+				} else {
+					break;
 				}
 			}
-			// when detect_len equal 0, means all detect characteres are matched
-			if detect_len == 0 {
-				// set code in unkown
-				doc.set_code_in(Unkown);
-				// find the matched
-				let end_tag_name = doc.prev_chars.split_off(prev_len).split_off(2);
-				// add an end tag
-				let mut end = Node::new(NodeType::TagEnd, doc.position.next_col());
-				end.content = Some(end_tag_name);
-				end.parent = Some(Rc::downgrade(&doc.current_node));
-				// set tag node's content, end_tag
-				let node = Rc::new(RefCell::new(end));
-				// here split off is quickly than clean_chars_to_vec
-				let content = doc.prev_chars.split_off(0);
-				let mut current_node = doc.current_node.borrow_mut();
-				current_node.end_tag = Some(Rc::clone(&node));
-				current_node.content = Some(content);
-				// remove current tag
-				doc.chain_nodes.pop();
-				doc.detect = None;
-				return Ok(());
-			}
+		}
+		// when detect_len equal 0, means all detect characteres are matched
+		if detect_len == 0 {
+			// set code in unkown
+			doc.set_code_in(Unkown);
+			// first remove end tag from prev_chars, and then remove '</' from end tag to get the name
+			let end_tag_name = doc.prev_chars.split_off(prev_len).split_off(2);
+			// add an end tag
+			let mut end = Node::new(NodeType::TagEnd, doc.position + 1);
+			end.content = Some(end_tag_name);
+			end.parent = Some(Rc::downgrade(&doc.current_node));
+			// set tag node's content, end_tag
+			let node = Rc::new(RefCell::new(end));
+			// here split off is quickly than clean_chars_to_vec
+			let content = doc.prev_chars.split_off(0);
+			let mut current_node = doc.current_node.borrow_mut();
+			current_node.end_tag = Some(Rc::clone(&node));
+			current_node.content = Some(content);
+			// remove current tag
+			doc.chain_nodes.pop();
+			doc.detect = None;
+			return Ok(());
 		}
 	}
 	doc.prev_chars.push(c);
@@ -1457,8 +1390,10 @@ fn parse_comment_or_cdata(doc: &mut Doc, c: char, _: &str) -> HResult {
 			let end_symbol = doc.mark_char;
 			let prev_char = chars[total - 1];
 			if prev_char == end_symbol && chars[total - 2] == end_symbol {
-				let mut content = doc.clean_chars_to_vec();
-				content.truncate(total - 2);
+				// remove suffix <comment>'--' or <cdata>']]'
+				doc.prev_chars.truncate(total - 2);
+				// set to content
+				let content = doc.clean_chars_to_vec();
 				doc.current_node.borrow_mut().content = Some(content);
 				// reset mark char
 				doc.mark_char = EOF_CHAR;
@@ -1651,8 +1586,8 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 
 pub struct Doc {
 	code_in: CodeTypeIn,
-	position: CodeAt,
-	mem_position: CodeAt,
+	position: usize,
+	mem_position: usize,
 	detect: Option<Vec<char>>,
 	prev_chars: Vec<char>,
 	mark_char: char,
@@ -1662,6 +1597,7 @@ pub struct Doc {
 	repeat_whitespace: bool,
 	check_textnode: Option<RefNode>,
 	handle: NextHandle,
+	pub chars: Vec<char>,
 	pub parse_options: ParseOptions,
 	pub root: RefNode,
 	pub id_tags: Rc<RefCell<StringNodeMap>>,
@@ -1674,10 +1610,7 @@ pub type ErrorHandle = Box<dyn Fn(Box<dyn Error>)>;
 impl Doc {
 	// create new parser
 	fn new() -> Self {
-		let node = Rc::new(RefCell::new(Node::new(
-			NodeType::AbstractRoot,
-			CodeAt::begin(),
-		)));
+		let node = Rc::new(RefCell::new(Node::new(NodeType::AbstractRoot, 0)));
 		let ref_node = Rc::clone(&node);
 		let current_node = Rc::clone(&node);
 		let root = Rc::clone(&node);
@@ -1689,8 +1622,8 @@ impl Doc {
 		chain_nodes.push(ref_node);
 		let mut doc = Doc {
 			code_in: CodeTypeIn::AbstractRoot,
-			position: CodeAt::begin(),
-			mem_position: CodeAt::begin(),
+			position: 0,
+			mem_position: 0,
 			mark_char: EOF_CHAR,
 			prev_chars: Vec::with_capacity(ALLOC_CHAR_CAPACITY),
 			chain_nodes,
@@ -1701,6 +1634,7 @@ impl Doc {
 			repeat_whitespace: false,
 			check_textnode: None,
 			handle: noop,
+			chars: Vec::with_capacity(100),
 			root,
 			id_tags: Rc::new(RefCell::new(HashMap::new())),
 			onerror: Rc::new(RefCell::new(None)),
@@ -1726,7 +1660,7 @@ impl Doc {
 		let mut doc = Doc::new();
 		doc.parse_options = options;
 		for c in content.chars() {
-			doc.next(&c, content)?;
+			doc.next(c, content)?;
 		}
 		doc.eof(content)?;
 		Ok(doc.into_root())
@@ -1752,9 +1686,9 @@ impl Doc {
 			let line_content = line.unwrap();
 			content.push_str(&line_content);
 			for c in line_content.chars() {
-				doc.next(&c, &content)?;
+				doc.next(c, &content)?;
 			}
-			doc.next(&'\n', &content)?;
+			doc.next('\n', &content)?;
 		}
 		doc.eof(&content)?;
 		Ok(doc.into_root())
@@ -1790,7 +1724,7 @@ impl Doc {
 				self.handle = parse_text;
 			}
 			HTMLScript | HTMLStyle | EscapeableRawText => {
-				self.handle = parse_special_tag;
+				self.handle = parse_content_tag;
 			}
 			HTMLDOCTYPE => {
 				self.handle = parse_doctype_name;
@@ -1814,14 +1748,10 @@ impl Doc {
 	}
 
 	// read chars one by one
-	fn next(&mut self, c: &char, content: &str) -> HResult {
+	fn next(&mut self, c: char, content: &str) -> HResult {
 		let handle = self.handle;
-		let _ = handle(self, *c, content)?;
-		self.position.move_one();
-		// check if special, and character is ok
-		if let Some((special, tag_name)) = &self.in_special {
-			special.is_ok(&self.code_in, tag_name, &c, &self.position, content)?;
-		}
+		handle(self, c, content)?;
+		self.position += 1;
 		// parse ok
 		Ok(())
 	}
@@ -1840,7 +1770,6 @@ impl Doc {
 			// add cur node to parent's child nodes
 			if let Some(childs) = &mut parent_node.childs {
 				child.borrow_mut().index = childs.len();
-
 				childs.push(child);
 			} else {
 				child.borrow_mut().index = 0;
@@ -1849,11 +1778,6 @@ impl Doc {
 			// set node root
 			node.borrow_mut().root = Some(Rc::downgrade(&self.root));
 		}
-		// set special
-		node.borrow_mut().special = match self.in_special {
-			Some((special, _)) => Some(special),
-			None => None,
-		};
 		// set current node to be new node
 		self.current_node = Rc::clone(&node);
 		// if is a tag node, add the tag node to chain nodes
@@ -1869,7 +1793,7 @@ impl Doc {
 		current_node.end_at = if node_type == Text {
 			self.position
 		} else {
-			self.position.next_col()
+			self.position + 1
 		};
 	}
 	// set spaces between tag
@@ -1976,10 +1900,7 @@ impl Doc {
 		}
 		Ok(())
 	}
-	// is in svg or mathml
-	fn check_special(&self) -> Option<&SpecialTag> {
-		self.in_special.as_ref().map(|(special, _)| special)
-	}
+
 	// end of the doc
 	fn eof(&mut self, context: &str) -> HResult {
 		let cur_depth = self.chain_nodes.len();
@@ -2000,7 +1921,6 @@ impl Doc {
 			}
 			// fix unclosed tags
 			let unclosed = self.chain_nodes.split_off(1);
-
 			self.fix_unclosed_tag(&unclosed);
 		}
 		// check and fix last node info.
@@ -2118,6 +2038,7 @@ impl Doc {
 		meta.borrow_mut().add_attr_value(quote);
 		meta.borrow_mut().code_in = TagCodeIn::Value;
 	}
+
 	// set attr value
 	fn set_tag_attr_value(&mut self, quote: Option<char>) {
 		let value = self.clean_chars_to_vec();
@@ -2135,12 +2056,10 @@ impl Doc {
 			}
 		}
 	}
+
 	// check tag type
 	fn check_tag_type_do(&mut self) {
 		use CodeTypeIn::*;
-		let is_in_svg = self
-			.check_special()
-			.map_or(false, |special| matches!(special, SpecialTag::Svg));
 		let lc_tag_name = self
 			.current_node
 			.borrow()
@@ -2152,9 +2071,7 @@ impl Doc {
 			.iter()
 			.map(|ch| ch.to_ascii_lowercase())
 			.collect::<Vec<char>>();
-		if is_script_or_style(&lc_tag_name, &None)
-			|| (!is_in_svg && is_plain_text_tag(&lc_tag_name, &None))
-		{
+		if is_content_tag(&lc_tag_name, &None) {
 			// svg tags allow script and style tag, but title and textarea will treat as normal tag
 			self.mem_position = self.position;
 			let code_in = if is_equal_chars(&lc_tag_name, &SCRIPT_TAG_NAME, &None) {
