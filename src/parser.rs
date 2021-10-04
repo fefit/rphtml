@@ -108,7 +108,7 @@ fn create_parse_error(kind: ErrorKind, position: usize, context: &str) -> HResul
 
 fn is_void_tag(name: &[char]) -> bool {
 	for cur_name in VOID_ELEMENTS.iter() {
-		if is_equal_chars(&cur_name, name, &None) {
+		if is_equal_chars(cur_name, name, &None) {
 			return true;
 		}
 	}
@@ -284,7 +284,7 @@ impl Attr {
 		let mut ret = Vec::with_capacity(ALLOC_CHAR_CAPACITY);
 		let mut has_key = false;
 		if let Some(AttrData { content, .. }) = &self.key {
-			ret.extend_from_slice(&content);
+			ret.extend_from_slice(content);
 			has_key = true;
 		}
 		if let Some(AttrData { content, .. }) = &self.value {
@@ -294,12 +294,12 @@ impl Attr {
 			if let Some(quote) = self.quote {
 				if self.need_quote || !remove_quote {
 					ret.push(quote);
-					ret.extend_from_slice(&content);
+					ret.extend_from_slice(content);
 					ret.push(quote);
 					return ret;
 				}
 			}
-			ret.extend_from_slice(&content);
+			ret.extend_from_slice(content);
 		}
 		ret
 	}
@@ -450,7 +450,7 @@ pub struct Node {
 	pub root: Option<Weak<RefCell<Node>>>,
 
 	// document
-	pub document: Option<RefDoc>,
+	pub document: Option<Weak<RefCell<Doc>>>,
 
 	// the content,for text/comment/style/script nodes
 	pub content: Option<Vec<char>>,
@@ -543,11 +543,10 @@ impl Node {
 											continue;
 										}
 										prev_is_space = true;
-										result.push(*ch);
 									} else {
 										prev_is_space = false;
-										result.push(*ch);
 									}
+									result.push(*ch);
 								}
 							} else if ch == &';' {
 								// entity end
@@ -574,20 +573,19 @@ impl Node {
 									continue;
 								}
 								prev_is_space = true;
-								result.push(c);
 							} else {
 								prev_is_space = false;
-								result.push(c);
 							}
+							result.push(c);
 						}
 					}
 				} else {
 					// decode entity
 					if options.decode_entity {
 						// when need decode, the content should append to result
-						decode_chars_to(&content, result);
+						decode_chars_to(content, result);
 					} else {
-						result.extend_from_slice(&content);
+						result.extend_from_slice(content);
 					}
 				}
 			}
@@ -600,12 +598,12 @@ impl Node {
 				let tag_name = &meta.name;
 				// check if is in pre, only check if not in pre
 				status.is_in_pre =
-					is_in_pre || is_equal_chars(&tag_name, &PRE_TAG_NAME, &Some(NameCase::Lower));
+					is_in_pre || is_equal_chars(tag_name, &PRE_TAG_NAME, &Some(NameCase::Lower));
 				if !is_inner {
 					// add tag name
 					result.push('<');
 					if !options.lowercase_tagname {
-						result.extend_from_slice(&tag_name);
+						result.extend_from_slice(tag_name);
 					} else {
 						for ch in tag_name {
 							result.push(ch.to_ascii_lowercase());
@@ -627,12 +625,12 @@ impl Node {
 				// content for some special tags, such as style/script
 				if let Some(content) = &self.content {
 					let need_encode =
-						options.encode_content && is_plain_text_tag(&tag_name, &Some(NameCase::Lower));
+						options.encode_content && is_plain_text_tag(tag_name, &Some(NameCase::Lower));
 					if !need_encode {
-						result.extend_from_slice(&content);
+						result.extend_from_slice(content);
 					} else {
 						// content tag's html need encode
-						result.extend(get_content_encode(&content));
+						result.extend(get_content_encode(content));
 					}
 				}
 			}
@@ -644,7 +642,7 @@ impl Node {
 				let mut content = &content[..];
 				if is_in_pre
 					&& is_equal_chars(
-						chars_trim_end(&content),
+						chars_trim_end(content),
 						&PRE_TAG_NAME,
 						&Some(NameCase::Lower),
 					) {
@@ -653,7 +651,7 @@ impl Node {
 				if !is_inner {
 					result.extend_from_slice(&['<', '/']);
 					if options.remove_endtag_space {
-						content = chars_trim_end(&content);
+						content = chars_trim_end(content);
 					}
 					if options.lowercase_tagname {
 						let content = content
@@ -662,7 +660,7 @@ impl Node {
 							.collect::<Vec<char>>();
 						result.extend(content);
 					} else {
-						result.extend_from_slice(&content);
+						result.extend_from_slice(content);
 					}
 					result.push('>');
 				}
@@ -675,7 +673,7 @@ impl Node {
 						.content
 						.as_ref()
 						.expect("Spaces between node must have whitespcaes");
-					result.extend_from_slice(&content);
+					result.extend_from_slice(content);
 				}
 			}
 			HTMLDOCTYPE => {
@@ -696,7 +694,7 @@ impl Node {
 					// comment
 					result.extend_from_slice(&['<', '!', '-', '-']);
 					if let Some(content) = &self.content {
-						result.extend_from_slice(&content);
+						result.extend_from_slice(content);
 					}
 					result.extend_from_slice(&['-', '-', '>']);
 				}
@@ -705,7 +703,7 @@ impl Node {
 				// cdata
 				result.extend_from_slice(&['<', '!', '[', 'C', 'D', 'A', 'T', 'A', '[']);
 				if let Some(content) = &self.content {
-					result.extend_from_slice(&content);
+					result.extend_from_slice(content);
 				}
 				result.extend_from_slice(&[']', ']', '>']);
 			}
@@ -770,7 +768,7 @@ impl Node {
 							if finded {
 								panic!("`inner_html` can't used in abstract root node which has multiple tag node childs.");
 							}
-							child_node = Some(Rc::clone(&child));
+							child_node = Some(Rc::clone(child));
 							finded = true;
 						}
 					}
@@ -1215,7 +1213,7 @@ fn parse_tagend(doc: &mut Doc, c: char, context: &str) -> HResult {
 						.borrow();
 					let start_tag_name = &meta.name;
 					let (is_equal, is_total_same) =
-						is_equal_chars_ignore_case(&start_tag_name, &fix_end_tag_name);
+						is_equal_chars_ignore_case(start_tag_name, fix_end_tag_name);
 					if is_equal {
 						if doc.parse_options.case_sensitive_tagname && !is_total_same {
 							return doc.error(
@@ -1514,7 +1512,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				}
 			} else {
 				return create_parse_error(
-					ErrorKind::UnrecognizedTag(doc.chars_to_string(), chars_to_string(&next_chars)),
+					ErrorKind::UnrecognizedTag(doc.chars_to_string(), chars_to_string(next_chars)),
 					doc.mem_position,
 					context,
 				);
@@ -1534,7 +1532,7 @@ fn parse_exclamation_begin(doc: &mut Doc, c: char, context: &str) -> HResult {
 				let special_tag_name = doc.in_special.as_ref().map(|(_, name)| name);
 				if let Some(tag_name) = special_tag_name {
 					if is_equal_chars(
-						&tag_name,
+						tag_name,
 						&doc
 							.chain_nodes
 							.last()
@@ -1651,7 +1649,7 @@ impl Doc {
 	// into root
 	pub fn into_root(self) -> DocHolder {
 		let doc = Rc::new(RefCell::new(self));
-		doc.borrow_mut().root.borrow_mut().document = Some(Rc::clone(&doc));
+		doc.borrow_mut().root.borrow_mut().document = Some(Rc::downgrade(&doc));
 		DocHolder { doc }
 	}
 
@@ -1815,7 +1813,7 @@ impl Doc {
 				let tag_name = &meta.borrow().name;
 				let mut end = Node::new(NodeType::TagEnd, self.position);
 				end.content = Some(tag_name.clone());
-				end.parent = Some(Rc::downgrade(&tag_node));
+				end.parent = Some(Rc::downgrade(tag_node));
 				end_tag = Some(end);
 			}
 			if let Some(end_tag) = end_tag {

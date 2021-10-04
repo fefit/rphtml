@@ -176,8 +176,8 @@ fn test_attrs() -> HResult {
 	assert_eq!(get_attr_content(&attrs[8].value), Some("A\\B\\C\\"));
 	// wrong value
 	assert!(parse(r#"<div id"1"></div>"#).is_ok());
-	assert_eq!(parse(r#"<div "1"'2'></div>"#).is_ok(), true);
-	assert_eq!(parse(r#"<div a="1\""></div>"#).is_ok(), true);
+	assert!(parse(r#"<div "1"'2'></div>"#).is_ok());
+	assert!(parse(r#"<div a="1\""></div>"#).is_ok());
 	Ok(())
 }
 
@@ -185,7 +185,7 @@ fn test_attrs() -> HResult {
 fn test_tag_close() -> HResult {
 	// tag not closed
 	let code = "<div>";
-	assert_eq!(parse(code).is_err(), true);
+	assert!(parse(code).is_err());
 	// allow code auto_fix
 	let doc = Doc::parse(
 		r#"<div id=1><div id=2><div id=3>3</div>"#,
@@ -194,13 +194,13 @@ fn test_tag_close() -> HResult {
 			..Default::default()
 		},
 	);
-	assert_eq!(doc.is_ok(), true);
+	assert!(doc.is_ok());
 	assert_eq!(
 		render(&doc?),
 		"<div id=1><div id=2><div id=3>3</div></div></div>"
 	);
 	// wrong tag end
-	assert_eq!(parse("<div></p>").is_err(), true);
+	assert!(parse("<div></p>").is_err());
 	Ok(())
 }
 

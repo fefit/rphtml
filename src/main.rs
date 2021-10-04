@@ -4964,10 +4964,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 		let doc = Doc::parse(
 			&code,
 			ParseOptions {
-				auto_fix_unexpected_endtag: true,
-				allow_self_closing: true,
-				auto_fix_unclosed_tag: true,
-				auto_fix_unescaped_lt: true,
+				// auto_fix_unexpected_endtag: true,
+				// allow_self_closing: true,
+				// auto_fix_unclosed_tag: true,
+				// auto_fix_unescaped_lt: true,
 				..Default::default()
 			},
 		)?;
