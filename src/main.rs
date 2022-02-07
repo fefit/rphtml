@@ -1,7 +1,8 @@
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
-use std::{error::Error, time::SystemTime};
-fn main() -> Result<(), Box<dyn Error>> {
+use rphtml::types::BoxDynError;
+use std::time::SystemTime;
+fn main() -> Result<(), BoxDynError> {
 	// let current_dir = env::current_dir()?;
 	// let source_dir = current_dir.join("cases").canonicalize()?;
 	// for entry in fs::read_dir(source_dir)? {

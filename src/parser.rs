@@ -2,11 +2,10 @@
 use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
 use crate::position::CodeRegion;
-use crate::types::{GenResult, HResult};
+use crate::types::{BoxDynError, GenResult, HResult};
 use htmlentity::entity::{decode_chars_to, encode_chars, EncodeType, Entity, EntitySet};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt;
 use std::rc::{Rc, Weak};
 use std::{
@@ -1603,7 +1602,7 @@ pub struct Doc {
 }
 
 pub type StringNodeMap = HashMap<String, RefNode>;
-pub type ErrorHandle = Box<dyn Fn(Box<dyn Error>)>;
+pub type ErrorHandle = Box<dyn Fn(BoxDynError)>;
 
 impl Doc {
 	// create new parser
@@ -2120,7 +2119,7 @@ impl Doc {
 
 // get an element from string node map
 fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
-	map.get(query).map(|node| Rc::clone(node))
+	map.get(query).map(Rc::clone)
 }
 /// Doc holder
 pub struct DocHolder {
