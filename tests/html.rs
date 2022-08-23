@@ -327,6 +327,7 @@ fn test_inner_html() -> HResult {
 	assert_eq!(render(&doc), code);
 	Ok(())
 }
+
 #[test]
 #[should_panic]
 fn test_wrong_inner_html() {
@@ -337,6 +338,48 @@ fn test_wrong_inner_html() {
 		minify_spaces: true,
 		..Default::default()
 	});
+}
+
+#[test]
+fn test_inner_text() -> HResult {
+	let inner_html = r##"<!--comment--><div>abc</div>"##;
+	let code = format!("<div>{}</div>", inner_html);
+	let doc = parse(&code)?;
+	assert_eq!(
+		doc.render(&RenderOptions {
+			inner_html: true,
+			..Default::default()
+		}),
+		inner_html
+	);
+	assert_eq!(
+		doc.render(&RenderOptions {
+			inner_html: true,
+			..Default::default()
+		}),
+		inner_html
+	);
+	assert_eq!(doc.render_text(&RenderOptions::default()), "abc");
+	let root_node = &doc.borrow().root;
+	assert!(root_node.borrow().childs.is_some());
+	if let Some(roots) = &root_node.borrow().childs {
+		let abs_root = roots[0].as_ref();
+		assert_eq!(roots.len(), 1);
+		assert!(abs_root.borrow().childs.is_some());
+		if let Some(childs) = &abs_root.borrow().childs {
+			let comment_child = childs[0].as_ref();
+			assert_eq!(comment_child.borrow().node_type, NodeType::Comment);
+			assert_eq!(
+				comment_child
+					.borrow()
+					.build(&RenderOptions::default(), true)
+					.iter()
+					.collect::<String>(),
+				"comment"
+			);
+		}
+	}
+	Ok(())
 }
 
 #[test]

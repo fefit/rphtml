@@ -22,7 +22,7 @@ use std::{
 */
 const TAG_BEGIN_CHAR: char = '<';
 const TAG_END_CHAR: char = '>';
-const EMPTY_CHAR: char = ' ';
+const WS_CHAR: char = ' ';
 const END_SLASH_CHAR: char = '/';
 const EQUAL_CHAR: char = '=';
 const DOUBLE_QUOTE_CHAR: char = '"';
@@ -153,7 +153,7 @@ pub enum DetectChar {
 	XMLCDATA,
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum NodeType {
 	AbstractRoot = 0,     // abstract root node
 	HTMLDOCTYPE = 1,      // html doctype
@@ -171,7 +171,7 @@ impl Default for NodeType {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeTypeIn {
 	AbstractRoot,      // abstract root node,the begin node of document
 	Unkown,            // wait for detect node
@@ -331,7 +331,7 @@ pub enum NameCase {
  * name: the tag name
  * attrs: the attribute list
 */
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TagCodeIn {
 	Wait,
 	Key,
@@ -362,12 +362,11 @@ impl TagMeta {
 		self
 			.attrs
 			.iter()
-			.map(|attr| {
+			.flat_map(|attr| {
 				let mut attr_content = attr.build(remove_quote);
-				attr_content.splice(0..0, vec![EMPTY_CHAR]);
+				attr_content.splice(0..0, vec![WS_CHAR]);
 				attr_content
 			})
-			.flatten()
 			.collect()
 	}
 	// add a key attr
@@ -411,13 +410,21 @@ type RefDoc = Rc<RefCell<Doc>>;
 
 #[derive(Default, Clone)]
 struct RenderStatus {
-	inner_type: Option<RenderStatuInnerType>,
+	inner_type: RenderStatuInnerType,
 	is_in_pre: bool,
+	root: bool,
 }
 #[derive(Clone)]
 enum RenderStatuInnerType {
+	None,
 	Html,
 	Text,
+}
+
+impl Default for RenderStatuInnerType {
+	fn default() -> Self {
+		RenderStatuInnerType::None
+	}
 }
 /**
  *
@@ -514,7 +521,16 @@ impl Node {
 	// build node
 	fn build_node(&self, options: &RenderOptions, status: &mut RenderStatus, result: &mut Vec<char>) {
 		let is_in_pre = status.is_in_pre;
-		let is_inner = status.inner_type.is_some();
+		let is_root = status.root;
+		// when get a tag's inner html or inner text
+		// the result should not contains itself(tag start or tag end)
+		// get inner text always do not contains itself
+		let need_tag = if is_root {
+			matches!(status.inner_type, RenderStatuInnerType::None)
+		} else {
+			// should not be inner text
+			!matches!(status.inner_type, RenderStatuInnerType::Text)
+		};
 		use NodeType::*;
 		match self.node_type {
 			Text => {
@@ -522,7 +538,7 @@ impl Node {
 				let content = self
 					.content
 					.as_ref()
-					.expect("Text node's conetnt must not empty");
+					.expect("Text node's content must not empty");
 				// check if need decode
 				if !is_in_pre && options.minify_spaces {
 					// just keep one space
@@ -598,7 +614,7 @@ impl Node {
 				// check if is in pre, only check if not in pre
 				status.is_in_pre =
 					is_in_pre || is_equal_chars(tag_name, &PRE_TAG_NAME, &Some(NameCase::Lower));
-				if !is_inner {
+				if need_tag {
 					// add tag name
 					result.push('<');
 					if !options.lowercase_tagname {
@@ -615,7 +631,7 @@ impl Node {
 					}
 					// add self closing
 					if meta.self_closed || (meta.auto_fix && options.always_close_void) {
-						result.push(EMPTY_CHAR);
+						result.push(WS_CHAR);
 						result.push('/');
 					}
 					// add end char
@@ -647,7 +663,7 @@ impl Node {
 					) {
 					status.is_in_pre = false;
 				}
-				if !is_inner {
+				if need_tag {
 					result.extend_from_slice(&['<', '/']);
 					if options.remove_endtag_space {
 						content = chars_trim_end(content);
@@ -690,16 +706,26 @@ impl Node {
 			}
 			Comment => {
 				if !options.remove_comment {
-					// comment
-					result.extend_from_slice(&['<', '!', '-', '-']);
-					if let Some(content) = &self.content {
-						result.extend_from_slice(content);
+					let is_inner_text = matches!(status.inner_type, RenderStatuInnerType::Text);
+					if is_root || !is_inner_text {
+						// when need wrap, use <!-- -->
+						// only when get the comment node itself's text
+						// get inner text of tag node, doesn't contains the comment node
+						let need_wrap = !(is_root && is_inner_text);
+						// comment
+						if need_wrap {
+							result.extend_from_slice(&['<', '!', '-', '-']);
+						}
+						if let Some(content) = &self.content {
+							result.extend_from_slice(content);
+						}
+						if need_wrap {
+							result.extend_from_slice(&['-', '-', '>']);
+						}
 					}
-					result.extend_from_slice(&['-', '-', '>']);
 				}
 			}
 			XMLCDATA => {
-				// cdata
 				result.extend_from_slice(&['<', '!', '[', 'C', 'D', 'A', 'T', 'A', '[']);
 				if let Some(content) = &self.content {
 					result.extend_from_slice(content);
@@ -713,10 +739,11 @@ impl Node {
 	fn build_tree(&self, options: &RenderOptions, status: &mut RenderStatus, result: &mut Vec<char>) {
 		self.build_node(options, status, result);
 		if let Some(childs) = &self.childs {
-			if let Some(RenderStatuInnerType::Html) = status.inner_type {
-				// get inner html
+			if status.root {
+				// change status root
 				let mut sub_status = status.clone();
-				sub_status.inner_type = None;
+				sub_status.root = false;
+				// get inner html
 				for child in childs {
 					child.borrow().build_tree(options, &mut sub_status, result);
 				}
@@ -738,11 +765,11 @@ impl Node {
 			if options.inner_html {
 				panic!("The 'inner_html' render option can't set true when 'inner_text' is true");
 			}
-			Some(RenderStatuInnerType::Text)
+			RenderStatuInnerType::Text
 		} else if options.inner_html {
-			Some(RenderStatuInnerType::Html)
+			RenderStatuInnerType::Html
 		} else {
-			None
+			RenderStatuInnerType::None
 		};
 		let throw_wrong_node = |node_type: &NodeType| -> ! {
 			panic!(
@@ -752,11 +779,15 @@ impl Node {
 		};
 		let status = &mut RenderStatus {
 			inner_type,
+			root: true,
 			..Default::default()
 		};
 		let mut result: Vec<char> = Vec::with_capacity(50);
 		// inner_html or inner_text
-		if status.inner_type.is_some() {
+		if matches!(
+			status.inner_type,
+			RenderStatuInnerType::Html | RenderStatuInnerType::Text
+		) {
 			if matches!(self.node_type, NodeType::AbstractRoot) {
 				// inner html for abstract root
 				if let Some(childs) = &self.childs {
@@ -781,8 +812,23 @@ impl Node {
 				// abstract without any child
 				return vec![];
 			}
-			if self.node_type != NodeType::Tag {
-				throw_wrong_node(&self.node_type);
+			match status.inner_type {
+				RenderStatuInnerType::Html => {
+					// only tag node allowed build html
+					if self.node_type != NodeType::Tag {
+						throw_wrong_node(&self.node_type);
+					}
+				}
+				RenderStatuInnerType::Text => {
+					// tag/comment/cdata allowed build text
+					if !(matches!(
+						self.node_type,
+						NodeType::Tag | NodeType::Comment | NodeType::XMLCDATA
+					)) {
+						throw_wrong_node(&self.node_type);
+					}
+				}
+				_ => {}
 			}
 		}
 		self.build_tree(options, status, &mut result);
@@ -844,7 +890,7 @@ impl Node {
 	}
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum SpecialTag {
 	MathML,
 	Svg,
@@ -1089,7 +1135,7 @@ fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 				// take as non quoted attribute key value
 				doc.prev_chars.push(c);
 				// jump to parse value
-				doc.mark_char = EMPTY_CHAR;
+				doc.mark_char = WS_CHAR;
 				doc.set_tag_code_in(TagCodeIn::Value);
 			}
 		}
@@ -1100,7 +1146,7 @@ fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 				doc.prev_chars.push(c);
 				if doc.is_tag_code_in(&TagCodeIn::WaitValue) {
 					// set the value end character as empty character
-					doc.mark_char = EMPTY_CHAR;
+					doc.mark_char = WS_CHAR;
 					// parse tag value
 					doc.set_tag_code_in(TagCodeIn::Value);
 				} else {
@@ -1161,7 +1207,7 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
 	#[inline]
 	fn make_quote(c: char) -> Option<char> {
-		if c == EMPTY_CHAR {
+		if c == WS_CHAR {
 			None
 		} else {
 			Some(c)
@@ -1169,7 +1215,7 @@ fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
 	}
 	// logic
 	let quote = doc.mark_char;
-	if c == quote || (quote == EMPTY_CHAR && c.is_ascii_whitespace()) {
+	if c == quote || (quote == WS_CHAR && c.is_ascii_whitespace()) {
 		// reset the detect char
 		doc.mark_char = EOF_CHAR;
 		doc.set_tag_attr_value(make_quote(quote));
