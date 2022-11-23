@@ -131,7 +131,7 @@ fn test_style_tag() -> HResult {
 #[test]
 fn test_attrs() -> HResult {
 	// a complex attribute
-	let code = r##"<img src=http://site.com/abc.jpg alt =abc defer data-width= 60 data-name = "abc" data-size='60*60' data-msg="quote must escape.&quot;" class="js-img img" xpath="A\B\C\" />"##;
+	let code = r##"<img src=http://site.com/abc.jpg alt =abc defer data-width= 60 data-name = "abc" data-size='60*60' data-msg="quote must escape.&quot;" class="js-img img" xpath="A\B\C\" endtag="<htmltag>" />"##;
 	let doc = parse(code)?;
 	let root = doc.get_root_node();
 	let root = root.borrow();
@@ -174,6 +174,9 @@ fn test_attrs() -> HResult {
 	// attribute 9
 	assert_eq!(get_attr_content(&attrs[8].key), Some("xpath"));
 	assert_eq!(get_attr_content(&attrs[8].value), Some("A\\B\\C\\"));
+	// attribute 10
+	assert_eq!(get_attr_content(&attrs[9].key), Some("endtag"));
+	assert_eq!(get_attr_content(&attrs[9].value), Some("<htmltag>"));
 	// wrong value
 	assert!(parse(r#"<div id"1"></div>"#).is_ok());
 	assert!(parse(r#"<div "1"'2'></div>"#).is_ok());

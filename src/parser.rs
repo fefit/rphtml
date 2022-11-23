@@ -1205,33 +1205,30 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 
 // parse tag attribute double quote value
 fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
-	#[inline]
-	fn make_quote(c: char) -> Option<char> {
-		if c == WS_CHAR {
-			None
-		} else {
-			Some(c)
-		}
-	}
 	// logic
 	let quote = doc.mark_char;
-	if c == quote || (quote == WS_CHAR && c.is_ascii_whitespace()) {
-		// reset the detect char
-		doc.mark_char = EOF_CHAR;
-		doc.set_tag_attr_value(make_quote(quote));
-		doc.set_tag_code_in(TagCodeIn::Wait);
-	} else {
-		// unquoted value
-		// check if avaiable character in value
+	let is_end = if quote == WS_CHAR {
 		if c == TAG_END_CHAR {
+			// unquoted value
+			// check if avaiable character in value
 			// set tag value parse end
-			doc.set_tag_attr_value(make_quote(quote));
+			doc.set_tag_attr_value(None);
 			doc.set_tag_code_in(TagCodeIn::ValueEnd);
 			// delegate to parse wait
 			parse_tag_wait(doc, c, context)?;
-		} else {
-			doc.prev_chars.push(c);
+			return Ok(());
 		}
+		c.is_ascii_whitespace()
+	} else {
+		c == quote
+	};
+	if is_end {
+		// reset the detect char
+		doc.mark_char = EOF_CHAR;
+		doc.set_tag_attr_value(Some(quote));
+		doc.set_tag_code_in(TagCodeIn::Wait);
+	} else {
+		doc.prev_chars.push(c);
 	}
 	Ok(())
 }

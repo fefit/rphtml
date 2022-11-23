@@ -31,7 +31,7 @@ pub enum ErrorKind {
 	WrongTag(String),
 	#[error("wrong end tag </{0}")]
 	WrongEndTag(String),
-	#[error("wrong child tag '<{1}' in tag '{}'")]
+	#[error("wrong child tag '<{1}' in tag '{0}'")]
 	ChildInSpecialTag(String, char),
 	#[error("unmatched tag '</{0}>'")]
 	UnmatchedClosedTag(String),
