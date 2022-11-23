@@ -1207,7 +1207,7 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
 	// logic
 	let quote = doc.mark_char;
-	let is_end = if quote == WS_CHAR {
+	let (is_end, attr_quote) = if quote == WS_CHAR {
 		if c == TAG_END_CHAR {
 			// unquoted value
 			// check if avaiable character in value
@@ -1218,14 +1218,14 @@ fn parse_tag_attr_value(doc: &mut Doc, c: char, context: &str) -> HResult {
 			parse_tag_wait(doc, c, context)?;
 			return Ok(());
 		}
-		c.is_ascii_whitespace()
+		(c.is_ascii_whitespace(), None)
 	} else {
-		c == quote
+		(c == quote, Some(quote))
 	};
 	if is_end {
 		// reset the detect char
 		doc.mark_char = EOF_CHAR;
-		doc.set_tag_attr_value(Some(quote));
+		doc.set_tag_attr_value(attr_quote);
 		doc.set_tag_code_in(TagCodeIn::Wait);
 	} else {
 		doc.prev_chars.push(c);
