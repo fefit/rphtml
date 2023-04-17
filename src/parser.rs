@@ -3,7 +3,7 @@ use crate::config::{ParseOptions, RenderOptions};
 use crate::error::{ErrorKind, ParseError};
 use crate::position::CodeRegion;
 use crate::types::{BoxDynError, GenResult, HResult};
-use htmlentity::entity::{decode_chars_to, encode_chars, EncodeType, Entity, EntitySet};
+use htmlentity::entity::{decode_chars_to, encode_char, CharacterSet, EncodeType, Entity};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt;
@@ -188,8 +188,20 @@ pub enum CodeTypeIn {
 	TextNode,          // text node
 }
 
-fn get_content_encode(content: &[char]) -> Vec<char> {
-	encode_chars(content, EntitySet::Html, EncodeType::Named)
+fn write_content_encode(content: &[char], chars: &mut Vec<char>) {
+	let character_set = CharacterSet::Html;
+	let encode_type = EncodeType::Named;
+	content.iter().for_each(|ch| {
+		if character_set.contains(ch) {
+			if let Some(entity) = encode_char(ch, &encode_type) {
+				entity.write_chars(chars);
+			} else {
+				chars.push(*ch);
+			}
+		} else {
+			chars.push(*ch);
+		}
+	});
 }
 
 // trim chars end whitespaces
@@ -566,7 +578,7 @@ impl Node {
 							} else if ch == &';' {
 								// entity end
 								let entity = &content[start_index + 1..index];
-								if let Some(decoded) = Entity::decode(entity) {
+								if let Ok(decoded) = Entity::decode_chars(entity) {
 									result.push(decoded);
 								} else {
 									result.push('&');
@@ -645,7 +657,7 @@ impl Node {
 						result.extend_from_slice(content);
 					} else {
 						// content tag's html need encode
-						result.extend(get_content_encode(content));
+						write_content_encode(content, result);
 					}
 				}
 			}

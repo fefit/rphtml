@@ -17,7 +17,7 @@ impl CodeRegion {
 			col: 0,
 		};
 		let mut prev_char = '\0';
-		for (cur_index, c) in context.chars().into_iter().enumerate() {
+		for (cur_index, c) in context.chars().enumerate() {
 			if cur_index <= index {
 				let mut need_move_col = true;
 				// \r newline in early macos
