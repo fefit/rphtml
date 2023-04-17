@@ -1,0 +1,47 @@
+name: test
+on:
+  - push
+jobs:
+  # Task test
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Checkout repo
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      # Install toolchain
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      # build coverage
+      - name: Run unit tests
+        run: cargo test
+  # Task coverage
+  coverage:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Checkout repo
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      # Install toolchain
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@nightly
+      # Install grcov
+      - name: Install grcov
+        run: curl -L https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 | tar jxf -
+      # Run coverage
+      - name: Build coverage
+        run: |
+          export CARGO_INCREMENTAL=0
+          export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
+          export RUSTDOCFLAGS="-Cpanic=abort"
+          cargo build --verbose $CARGO_OPTIONS
+          cargo test --verbose $CARGO_OPTIONS
+          zip -0 ccov.zip `find . \( -name "rphtml*.gc*" \) -print`;
+          ./grcov ccov.zip -s . -t lcov --llvm --branch --ignore-not-existing --ignore "/*" -o lcov.info;
+          bash <(curl -s https://codecov.io/bash) -f lcov.info;
