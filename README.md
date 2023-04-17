@@ -3,7 +3,7 @@
 一个用 rust 编写的 html 文档解析器，0.4.0 版本前通过 wasm-pack/wasm-bindgen 提供 npm 包。
 
 [![npm version](https://badge.fury.io/js/rphtml.svg)](https://badge.fury.io/js/rphtml)
-[![Build Status](https://travis-ci.org/fefit/rphtml.svg?branch=master)](https://travis-ci.com/github/fefit/rphtml)
+[![Build Status](https://github.com/fefit/rphtml/actions/workflows/test.yml/badge.svg)](https://github.com/fefit/rphtml/actions)
 [![codecov](https://codecov.io/gh/fefit/rphtml/branch/master/graph/badge.svg)](https://codecov.io/gh/fefit/rphtml)
 
 ## 如何使用
