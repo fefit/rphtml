@@ -276,7 +276,7 @@ fn is_equal_chars_ignore_case(target: &[char], cmp: &[char]) -> (bool, bool) {
  * if key is None,it's a value with quote
  */
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Attr {
 	pub key: Option<AttrData>,
 	pub value: Option<AttrData>,
@@ -284,7 +284,7 @@ pub struct Attr {
 	pub need_quote: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AttrData {
 	pub content: Vec<char>,
 }
@@ -343,7 +343,7 @@ pub enum NameCase {
  * name: the tag name
  * attrs: the attribute list
 */
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TagCodeIn {
 	Wait,
 	Key,
@@ -358,7 +358,7 @@ impl Default for TagCodeIn {
 		TagCodeIn::Wait
 	}
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TagMeta {
 	code_in: TagCodeIn,
 	pub is_void: bool,
@@ -498,6 +498,14 @@ impl fmt::Debug for Node {
 	}
 }
 
+impl Clone for Node {
+	fn clone(&self) -> Self {
+		let ref_node = self.clone_node();
+		let inner = Rc::try_unwrap(ref_node).unwrap();
+		inner.into_inner()
+	}
+}
+
 impl Node {
 	// create a new node
 	pub fn new(node_type: NodeType, code_at: usize) -> Self {
@@ -508,6 +516,54 @@ impl Node {
 			..Default::default()
 		}
 	}
+
+	// clone node but without childs
+	fn clone_node_without_childs(&self, reduce_code_at: usize) -> RefNode {
+		Rc::new(RefCell::new(Node {
+			begin_at: self.begin_at - reduce_code_at,
+			end_at: self.end_at - reduce_code_at,
+			index: 0,
+			node_type: self.node_type,
+			root: self.root.clone(),
+			parent: None,
+			content: self.content.clone(),
+			document: self.document.clone(),
+			meta: self
+				.meta
+				.as_ref()
+				.map(|mt| RefCell::new(mt.borrow().clone())),
+			childs: None,
+			prev: None,
+			end_tag: self
+				.end_tag
+				.as_ref()
+				.map(|end_tag| end_tag.borrow().clone_node_with(reduce_code_at)),
+		}))
+	}
+
+	// clone node with reduced code at
+	fn clone_node_with(&self, reduce_code_at: usize) -> RefNode {
+		let parent_node = self.clone_node_without_childs(reduce_code_at);
+		let mut cur_childs: Vec<RefNode> = vec![];
+		if let Some(childs) = &self.childs {
+			for node in childs {
+				let cur_node = node.borrow().clone_node_with(reduce_code_at);
+				cur_node.borrow_mut().parent = Some(Rc::downgrade(&parent_node));
+				cur_node.borrow_mut().prev = cur_childs.last().map(Rc::downgrade);
+				cur_node.borrow_mut().index = node.borrow().index;
+				cur_childs.push(cur_node);
+			}
+			parent_node.borrow_mut().childs = Some(cur_childs);
+		}
+		parent_node
+	}
+
+	// clone node
+	pub fn clone_node(&self) -> RefNode {
+		self.clone_node_with(self.end_at - self.begin_at)
+	}
+
+	// create text node
 	pub fn create_text_node(content: Vec<char>, code_at: Option<usize>) -> Self {
 		let mut is_all_spaces = true;
 		for ch in &content {
