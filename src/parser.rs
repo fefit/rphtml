@@ -153,9 +153,10 @@ pub enum DetectChar {
 	XMLCDATA,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Default)]
 pub enum NodeType {
-	AbstractRoot = 0,     // abstract root node
+	#[default]
+	AbstractRoot = 0, // abstract root node
 	HTMLDOCTYPE = 1,      // html doctype
 	Comment = 2,          // comment
 	Text = 3,             // text node
@@ -163,12 +164,6 @@ pub enum NodeType {
 	Tag = 5,              // the start tag\self-closing tag\autofix empty tag
 	TagEnd = 6,           // the end tag node
 	XMLCDATA = 7,         // XML CDATA, IN SVG OR MATHML
-}
-
-impl Default for NodeType {
-	fn default() -> Self {
-		NodeType::AbstractRoot
-	}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,8 +338,9 @@ pub enum NameCase {
  * name: the tag name
  * attrs: the attribute list
 */
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum TagCodeIn {
+	#[default]
 	Wait,
 	Key,
 	KeyEnd,
@@ -353,11 +349,6 @@ pub enum TagCodeIn {
 	ValueEnd,
 }
 
-impl Default for TagCodeIn {
-	fn default() -> Self {
-		TagCodeIn::Wait
-	}
-}
 #[derive(Debug, Default, Clone)]
 pub struct TagMeta {
 	code_in: TagCodeIn,
@@ -426,18 +417,14 @@ struct RenderStatus {
 	is_in_pre: bool,
 	root: bool,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 enum RenderStatuInnerType {
+	#[default]
 	None,
 	Html,
 	Text,
 }
 
-impl Default for RenderStatuInnerType {
-	fn default() -> Self {
-		RenderStatuInnerType::None
-	}
-}
 /**
  *
  */
@@ -501,8 +488,8 @@ impl fmt::Debug for Node {
 impl Clone for Node {
 	fn clone(&self) -> Self {
 		let ref_node = self.clone_node();
-		let inner = Rc::try_unwrap(ref_node).unwrap();
-		inner.into_inner()
+		let cell_node = Rc::try_unwrap(ref_node).unwrap();
+		cell_node.into_inner()
 	}
 }
 
@@ -560,7 +547,7 @@ impl Node {
 
 	// clone node
 	pub fn clone_node(&self) -> RefNode {
-		self.clone_node_with(self.end_at - self.begin_at)
+		self.clone_node_with(self.begin_at)
 	}
 
 	// create text node
@@ -2230,7 +2217,7 @@ impl Doc {
 
 // get an element from string node map
 fn get_element(map: &StringNodeMap, query: &str) -> Option<RefNode> {
-	map.get(query).map(Rc::clone)
+	map.get(query).cloned()
 }
 /// Doc holder
 pub struct DocHolder {

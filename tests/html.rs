@@ -1,3 +1,5 @@
+use std::rc::{Rc, Weak};
+
 use rphtml::config::{ParseOptions, RenderOptions};
 use rphtml::parser::*;
 use rphtml::types::{GenResult, HResult};
@@ -800,4 +802,86 @@ fn test_decode() -> HResult {
 fn test_parse_file() {
 	let doc = Doc::parse_file("./cases/full.html", Default::default());
 	assert!(doc.is_ok());
+}
+
+#[test]
+fn test_clone_node() -> HResult {
+	let html = r##"<div id="clone"><span id="sub">abc</span>def<br /></div>"##;
+	let doc = parse(html)?;
+	let node = doc.get_element_by_id("clone");
+	assert!(node.is_some());
+	let node = node.unwrap();
+	let clone_node = node.borrow().clone_node();
+	assert_eq!(clone_node.borrow().begin_at, 0);
+	assert_eq!(
+		clone_node.borrow().end_at,
+		node.borrow().end_at - node.borrow().begin_at
+	);
+	assert_eq!(clone_node.borrow().node_type, node.borrow().node_type);
+	assert_eq!(clone_node.borrow().index, 0);
+	assert!(clone_node.borrow().root.is_some());
+	assert!(Weak::ptr_eq(
+		clone_node.borrow().root.as_ref().unwrap(),
+		node.borrow().root.as_ref().unwrap()
+	));
+	let root = Weak::upgrade(clone_node.borrow().root.as_ref().unwrap()).unwrap();
+	let maybe_doc = root.borrow().document.as_ref().map(Weak::upgrade).unwrap();
+	assert!(maybe_doc.is_some());
+	let clone_doc: DocHolder = maybe_doc.unwrap().into();
+	assert_eq!(clone_doc.render(&RenderOptions::default()), html);
+	assert_eq!(
+		clone_node
+			.borrow()
+			.childs
+			.as_ref()
+			.map(|childs| childs.len()),
+		Some(3)
+	);
+	let borrow_clone_node = clone_node.borrow();
+	let childs = borrow_clone_node.childs.as_ref().unwrap();
+	assert_eq!(childs[0].borrow().index, 0);
+	assert!(childs[0].borrow().prev.is_none());
+	assert_eq!(childs[1].borrow().index, 1);
+	assert!(childs[1].borrow().prev.is_some());
+	assert!(Rc::ptr_eq(
+		&childs[0],
+		&Weak::upgrade(childs[1].borrow().prev.as_ref().unwrap()).unwrap()
+	));
+	assert_eq!(childs[2].borrow().index, 2);
+	childs[1].borrow_mut().content = Some("clone".chars().collect::<Vec<char>>());
+	assert_eq!(
+		borrow_clone_node
+			.build(&RenderOptions::default(), false)
+			.iter()
+			.collect::<String>(),
+		r##"<div id="clone"><span id="sub">abc</span>clone<br /></div>"##
+	);
+	assert_eq!(
+		node.borrow().childs.as_ref().unwrap()[1]
+			.borrow()
+			.content
+			.as_ref()
+			.unwrap()
+			.iter()
+			.collect::<String>(),
+		String::from("def")
+	);
+	assert_eq!(doc.render(&RenderOptions::default()), html);
+	childs[0]
+		.borrow_mut()
+		.meta
+		.as_ref()
+		.unwrap()
+		.borrow_mut()
+		.attrs
+		.clear();
+	assert_eq!(
+		borrow_clone_node
+			.build(&RenderOptions::default(), false)
+			.iter()
+			.collect::<String>(),
+		r##"<div id="clone"><span>abc</span>clone<br /></div>"##
+	);
+	assert_eq!(doc.render(&RenderOptions::default()), html);
+	Ok(())
 }

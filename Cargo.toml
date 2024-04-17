@@ -1,6 +1,6 @@
 [package]
 name = "rphtml"
-version = "0.5.9"
+version = "0.5.10"
 authors = ["jxz_211 <jxz_211@163.com>"]
 edition = "2018"
 license = "MIT"
@@ -8,7 +8,13 @@ description = "A html parser written in rust."
 keywords = ["html", "parser", "html-parser", "html-minify"]
 repository = "https://github.com/fefit/rphtml"
 categories = ["parser-implementations", "wasm"]
-exclude = ["node/**/*.*", "cases/**/*.*", "build.sh", "codecov.yml", ".travis.yml"]
+exclude = [
+  "node/**/*.*",
+  "cases/**/*.*",
+  "build.sh",
+  "codecov.yml",
+  ".travis.yml",
+]
 readme = "README.md"
 
 [dependencies]
