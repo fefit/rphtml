@@ -1,6 +1,7 @@
 #[derive(Debug, Default)]
 pub struct ParseOptions {
 	pub case_sensitive_tagname: bool, // whether the tagname is case-sensitive, default case-insenstive
+	pub allow_attr_key_starts_with_equal_sign: bool, // allow attr key starts with '='
 	pub allow_self_closing: bool,     // allow self closing that not void elements
 	pub auto_fix_unclosed_tag: bool,  // auto fix unclosed tag
 	pub auto_fix_unexpected_endtag: bool, // auto fix unexpected end tag

@@ -1098,7 +1098,8 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 	match c {
 		TAG_END_CHAR => {
 			if let Some(meta) = &doc.current_node.borrow_mut().meta {
-				if !doc.parse_options.allow_self_closing {
+				if !doc.parse_options.allow_self_closing && !matches!(doc.code_in, CodeTypeIn::HTMLDOCTYPE)
+				{
 					// void elements or self closing element
 					// sub element in Svg or MathML allow self-closing
 					if !(meta.borrow().is_void || doc.in_special.is_some()) {
@@ -1188,11 +1189,19 @@ fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
 				doc.set_tag_code_in(TagCodeIn::WaitValue);
 			} else if doc.is_tag_code_in(&TagCodeIn::Wait) {
 				// equal char is not a valid attribute key name
-				return create_parse_error(
-					ErrorKind::WrongTag(String::from("'=' is not a valid attribute name")),
-					doc.position,
-					context,
-				);
+				if !doc.parse_options.allow_attr_key_starts_with_equal_sign {
+					return create_parse_error(
+						ErrorKind::WrongTag(String::from("'=' is not a valid attribute name")),
+						doc.position,
+						context,
+					);
+				}
+				// take it as normal key
+				doc.prev_chars.push(c);
+				// add attr key
+				doc.add_tag_attr_key();
+				// parse attr key
+				doc.set_tag_code_in(TagCodeIn::Key);
 			} else {
 				// take as non quoted attribute key value
 				doc.prev_chars.push(c);
@@ -1246,6 +1255,7 @@ fn parse_tag_attr_key(doc: &mut Doc, c: char, context: &str) -> HResult {
 			doc.set_tag_attr_key();
 			// set tag code in
 			doc.set_tag_code_in(TagCodeIn::Wait);
+			doc.handle = parse_tag_self_closing;
 		}
 		_ => {
 			if c.is_ascii_whitespace() {

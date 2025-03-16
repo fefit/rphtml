@@ -17,6 +17,7 @@ fn main()->HResult{
     auto_fix_unclosed_tag: true, // 自动修复没有结束的标签，注意这里只是简单的将标签闭合
     auto_fix_unexpected_endtag: true, // 自动修复不正确的结束标签，如 "<div></p></div>" 会被修复为 "<div></div>"
     auto_fix_unescaped_lt: true, // 自动修复没有实体转译的左尖括号 '<', 比如`<div>a<b</div>`会被修复为`<div>a&lt;b</div>`
+    allow_attr_key_starts_with_equal_sign: true, // 是否允许 "=" 符号出现在属性名的开头，如 `<div =a="c" />` 属性名为"=a"，值为"c"
   })?;
   // 获取root根节点
   let root = doc.get_root_node();
