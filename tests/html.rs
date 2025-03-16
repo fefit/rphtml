@@ -183,6 +183,31 @@ fn test_attrs() -> HResult {
 	assert!(parse(r#"<div id"1"></div>"#).is_ok());
 	assert!(parse(r#"<div "1"'2'></div>"#).is_ok());
 	assert!(parse(r#"<div a="1\""></div>"#).is_ok());
+	// equal sign as attr
+	// after space
+	let code = "<span =></span>";
+	let doc_res = parse(code);
+	assert!(doc_res.is_err());
+	// after quote value
+	let code = r#"<span a="b"=></span>"#;
+	let doc_res = parse(code);
+	assert!(doc_res.is_err());
+	// after wait value
+	let code = r#"<span a==></span>"#;
+	let doc_res = parse(code);
+	assert!(doc_res.is_ok());
+	let root = doc_res.unwrap().get_root_node();
+	let root = root.borrow();
+	let childs = root.childs.as_ref().unwrap();
+	let first_child = &childs[0];
+	let first_child = &first_child.borrow();
+	let attrs = &first_child.meta.as_ref().unwrap().borrow().attrs;
+	assert_eq!(get_attr_content(&attrs[0].key), Some("a"));
+	assert_eq!(get_attr_content(&attrs[0].value), Some("="));
+	// after self closing
+	let code = r#"<span a=b /==a></span>"#;
+	let doc_res = parse(code);
+	assert!(doc_res.is_err());
 	Ok(())
 }
 

@@ -52,7 +52,6 @@ impl CodeRegion {
 	// move to next col
 	pub fn move_one(&mut self) {
 		self.col += 1;
-		self.index += 1;
 	}
 }
 

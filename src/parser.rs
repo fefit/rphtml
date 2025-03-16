@@ -1129,13 +1129,13 @@ fn parse_tag_self_closing(doc: &mut Doc, c: char, context: &str) -> HResult {
 }
 
 /// in tag, wait attribute or end
-fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
+fn parse_tag_wait(doc: &mut Doc, c: char, context: &str) -> HResult {
 	// All tag wait status will parsed in this process
 	// 1. spaces between attributes TagCodeIn::Wait
 	// 2. (spaces)?= TagCodeIn::KeyEnd
 	// 3. new attribute key
 	// 4. attribute value
-	// 5. double quote single quote value attribute
+	// 5. double quote or single quote value attribute
 	// 6. tag end
 	// 7. self closing
 	match c {
@@ -1186,6 +1186,13 @@ fn parse_tag_wait(doc: &mut Doc, c: char, _: &str) -> HResult {
 			if doc.is_tag_code_in(&TagCodeIn::KeyEnd) {
 				// the prev process is parse attr key
 				doc.set_tag_code_in(TagCodeIn::WaitValue);
+			} else if doc.is_tag_code_in(&TagCodeIn::Wait) {
+				// equal char is not a valid attribute key name
+				return create_parse_error(
+					ErrorKind::WrongTag(String::from("'=' is not a valid attribute name")),
+					doc.position,
+					context,
+				);
 			} else {
 				// take as non quoted attribute key value
 				doc.prev_chars.push(c);
