@@ -66,6 +66,24 @@ fn test_pre_tag() -> HResult {
 	assert_eq!(doc.render(&options), r#"<pre> abc </pre><a> </a>"#);
 	// pre tag
 	assert!(parse(r##"<pre><a></a></pre>"##).is_ok());
+	let code = r##"<pre>
+  <code>   
+    aaaaa   
+  </code>
+</pre>"##;
+	let doc = parse(code)?;
+	let options = RenderOptions {
+		minify_spaces: true,
+		inner_html: true,
+		..Default::default()
+	};
+	assert_eq!(
+		doc.render(&options),
+		r#"  <code>   
+    aaaaa   
+  </code>
+"#
+	);
 	Ok(())
 }
 
